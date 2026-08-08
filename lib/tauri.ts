@@ -108,9 +108,18 @@ export async function resizeVoiceBar(width: number, height: number): Promise<voi
   await invokeCommand("resize_voice_bar", { width, height });
 }
 
-/** Move the bar to an absolute logical position (used while dragging). */
-export async function moveVoiceBar(x: number, y: number): Promise<void> {
-  await invokeCommand("move_voice_bar", { x: Math.round(x), y: Math.round(y) });
+export async function beginVoiceBarDrag(): Promise<void> {
+  await invokeCommand("begin_voice_bar_drag");
+}
+
+/** Feed one pointer delta. Position is accumulated in Rust. */
+export async function nudgeVoiceBar(dx: number, dy: number): Promise<void> {
+  await invokeCommand("nudge_voice_bar", { dx, dy });
+}
+
+/** Finish the drag and snap to the nearest edge. Returns the new dock. */
+export async function endVoiceBarDrag(): Promise<string> {
+  return invokeCommand<string>("end_voice_bar_drag");
 }
 
 /** Snap to the nearest edge of the monitor the bar is actually on. */

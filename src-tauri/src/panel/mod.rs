@@ -140,6 +140,38 @@ pub fn fallback_position(
     fallback_position_sized(window, anchor, margin, None)
 }
 
+/// Logical geometry of the output the window is on, plus the window's own
+/// logical size. Everything drag-related works in this space.
+pub struct OutputGeometry {
+    pub width: f64,
+    pub height: f64,
+    pub win_width: f64,
+    pub win_height: f64,
+}
+
+pub fn output_geometry(window: &tauri::WebviewWindow) -> Result<OutputGeometry, String> {
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .or_else(|| {
+            window
+                .available_monitors()
+                .ok()
+                .and_then(|list| list.into_iter().next())
+        })
+        .ok_or_else(|| "No monitor found for the voice bar.".to_string())?;
+    let scale = monitor.scale_factor();
+    let size = window.outer_size().map_err(|err| err.to_string())?;
+    Ok(OutputGeometry {
+        width: monitor.size().width as f64 / scale,
+        height: monitor.size().height as f64 / scale,
+        win_width: size.width as f64 / scale,
+        win_height: size.height as f64 / scale,
+    })
+}
+
 /// Re-apply an anchor, preferring the platform panel mechanism.
 pub fn reposition(
     window: &tauri::WebviewWindow,

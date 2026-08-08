@@ -148,6 +148,10 @@ struct AppState {
     /// Where the voice bar is docked. A resize has to re-apply this, otherwise
     /// the pill grows away from its edge instead of staying against it.
     voice_bar_anchor: Mutex<panel::PanelAnchor>,
+    /// Live position during a drag, in logical pixels relative to the output
+    /// the bar is on. Held in Rust so the accumulated position never depends
+    /// on reading the window back — reading it is what caused the jitter.
+    voice_bar_drag: Mutex<Option<(f64, f64)>>,
 }
 
 /// A running streaming-transcription worker. Dropping it stops the worker.
@@ -1855,13 +1859,99 @@ fn show_voice_bar_passive(app: AppHandle) -> Result<(), String> {
     window.show().map_err(|err| err.to_string())
 }
 
-/// Move the voice bar to an absolute logical position while dragging.
+/// Begin a drag: resolve where the bar currently is, in output-local logical
+/// pixels, and remember it as the running position.
 #[tauri::command]
-fn move_voice_bar(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
+fn begin_voice_bar_drag(app: AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("voice-bar")
         .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
-    panel::move_to(&window, x, y)
+    let geom = panel::output_geometry(&window)?;
+    let anchor = app
+        .state::<AppState>()
+        .voice_bar_anchor
+        .lock()
+        .map(|value| *value)
+        .unwrap_or(panel::PanelAnchor::BottomCenter);
+
+    // Where the current anchor puts it, expressed as a free position.
+    let margin = 18.0;
+    let x = match anchor.horizontal() {
+        Some(true) => margin,
+        Some(false) => geom.width - geom.win_width - margin,
+        None => (geom.width - geom.win_width) / 2.0,
+    };
+    let y = if anchor.is_top() {
+        margin
+    } else {
+        geom.height - geom.win_height - margin
+    };
+
+    if let Ok(mut slot) = app.state::<AppState>().voice_bar_drag.lock() {
+        *slot = Some((x, y));
+    }
+    Ok(())
+}
+
+/// Apply a pointer delta. Deltas come from a locked pointer, so they are pure
+/// relative motion and unaffected by the window moving underneath the cursor —
+/// which is what made a screenX-based drag oscillate.
+#[tauri::command]
+fn nudge_voice_bar(app: AppHandle, dx: f64, dy: f64) -> Result<(), String> {
+    let window = app
+        .get_webview_window("voice-bar")
+        .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
+    let geom = panel::output_geometry(&window)?;
+    let state = app.state::<AppState>();
+    let mut slot = state
+        .voice_bar_drag
+        .lock()
+        .map_err(|_| "Drag lock poisoned".to_string())?;
+    let Some((x, y)) = slot.as_mut() else {
+        return Ok(());
+    };
+    // Clamp inside the output: layer-shell margins are output-relative, and
+    // letting them exceed it pushed the bar onto the neighbouring screen.
+    *x = (*x + dx).clamp(0.0, (geom.width - geom.win_width).max(0.0));
+    *y = (*y + dy).clamp(0.0, (geom.height - geom.win_height).max(0.0));
+    panel::move_to(&window, x.round() as i32, y.round() as i32)
+}
+
+/// Finish a drag by snapping to the nearest edge of the current output.
+#[tauri::command]
+fn end_voice_bar_drag(app: AppHandle) -> Result<String, String> {
+    let window = app
+        .get_webview_window("voice-bar")
+        .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
+    let geom = panel::output_geometry(&window)?;
+    let state = app.state::<AppState>();
+    let position = state
+        .voice_bar_drag
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take());
+    let Some((x, y)) = position else {
+        return Ok("bottom-center".to_string());
+    };
+
+    let cx = x + geom.win_width / 2.0;
+    let cy = y + geom.win_height / 2.0;
+    let vertical = if cy < geom.height / 2.0 { "top" } else { "bottom" };
+    let horizontal = if cx < geom.width / 3.0 {
+        "left"
+    } else if cx > geom.width * 2.0 / 3.0 {
+        "right"
+    } else {
+        "center"
+    };
+    let name = format!("{vertical}-{horizontal}");
+    let target = panel::PanelAnchor::parse(&name)
+        .ok_or_else(|| format!("Unknown panel anchor '{name}'."))?;
+    panel::anchor(&window, target, 18, false)?;
+    if let Ok(mut slot) = state.voice_bar_anchor.lock() {
+        *slot = target;
+    }
+    Ok(name)
 }
 
 /// Snap the voice bar to whichever screen edge it currently sits nearest.
@@ -2046,6 +2136,7 @@ pub fn run() {
                 streaming: Mutex::new(None),
                 push_to_talk: Mutex::new(None),
                 voice_bar_anchor: Mutex::new(panel::PanelAnchor::BottomCenter),
+                voice_bar_drag: Mutex::new(None),
             });
 
             // Anchor the voice bar while it is still unmapped. gtk-layer-shell
@@ -2096,7 +2187,9 @@ pub fn run() {
             anchor_voice_bar,
             resize_voice_bar,
             snap_voice_bar,
-            move_voice_bar,
+            begin_voice_bar_drag,
+            nudge_voice_bar,
+            end_voice_bar_drag,
             hide_voice_bar,
             show_settings_window
         ])
