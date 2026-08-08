@@ -126,11 +126,52 @@ pub fn anchor(
 }
 
 /// Position the window against a screen corner using plain window geometry.
-/// Used when the platform cannot give us a real panel.
+///
+/// `size_override` exists for the resize path. `set_size` does not take effect
+/// synchronously, so reading `outer_size()` right after it returns the *old*
+/// size and the window gets placed as if it were still its previous shape —
+/// which, on a HiDPI display, is off by the scale factor as well. Callers that
+/// just resized pass the size they asked for instead of racing the compositor.
 pub fn fallback_position(
     window: &tauri::WebviewWindow,
     anchor: PanelAnchor,
     margin: i32,
+) -> Result<PanelStatus, String> {
+    fallback_position_sized(window, anchor, margin, None)
+}
+
+/// Re-apply an anchor, preferring the platform panel mechanism.
+pub fn reposition(
+    window: &tauri::WebviewWindow,
+    anchor: PanelAnchor,
+    margin: i32,
+    size_override: Option<tauri::PhysicalSize<u32>>,
+) -> Result<PanelStatus, String> {
+    #[cfg(target_os = "linux")]
+    if let Ok(status) = linux_layer::anchor(window, anchor, margin) {
+        return Ok(status);
+    }
+    fallback_position_sized(window, anchor, margin, size_override)
+}
+
+/// Move a layer surface to an absolute logical position (Linux/Wayland only).
+#[cfg(target_os = "linux")]
+pub fn move_to(window: &tauri::WebviewWindow, x: i32, y: i32) -> Result<(), String> {
+    linux_layer::move_to(window, x, y)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn move_to(window: &tauri::WebviewWindow, x: i32, y: i32) -> Result<(), String> {
+    window
+        .set_position(tauri::LogicalPosition::new(x, y))
+        .map_err(|err| err.to_string())
+}
+
+pub fn fallback_position_sized(
+    window: &tauri::WebviewWindow,
+    anchor: PanelAnchor,
+    margin: i32,
+    size_override: Option<tauri::PhysicalSize<u32>>,
 ) -> Result<PanelStatus, String> {
     // An unmapped window has no current monitor yet — this runs at startup,
     // before the bar has ever been shown — so fall back through the primary
@@ -148,23 +189,43 @@ pub fn fallback_position(
         })
         .ok_or_else(|| "No monitor found for the voice bar.".to_string())?;
 
-    let screen = monitor.size();
-    let origin = monitor.position();
-    let size = window.outer_size().map_err(|err| err.to_string())?;
+    // Everything is computed in *logical* pixels and applied with
+    // LogicalPosition.
+    //
+    // Mixing units is what put the bar in the middle of the screen. Monitor
+    // position and size are physical, window geometry as the compositor
+    // reports it is logical, and on a mixed-DPI desk (a 1.0 external above a
+    // 1.25 laptop panel) the two spaces do not even share an origin, so
+    // `origin + size - height` silently lands hundreds of pixels off.
+    let scale = monitor.scale_factor();
+    let screen_w = monitor.size().width as f64 / scale;
+    let screen_h = monitor.size().height as f64 / scale;
+    let origin_x = monitor.position().x as f64 / scale;
+    let origin_y = monitor.position().y as f64 / scale;
+
+    let physical = match size_override {
+        Some(size) => size,
+        None => window.outer_size().map_err(|err| err.to_string())?,
+    };
+    let win_w = physical.width as f64 / scale;
+    let win_h = physical.height as f64 / scale;
+
+    // Margin stays in logical pixels: the same visual inset on every display.
+    let margin = margin as f64;
 
     let x = match anchor.horizontal() {
-        Some(true) => origin.x + margin,
-        Some(false) => origin.x + screen.width as i32 - size.width as i32 - margin,
-        None => origin.x + (screen.width as i32 - size.width as i32) / 2,
+        Some(true) => origin_x + margin,
+        Some(false) => origin_x + screen_w - win_w - margin,
+        None => origin_x + (screen_w - win_w) / 2.0,
     };
     let y = if anchor.is_top() {
-        origin.y + margin
+        origin_y + margin
     } else {
-        origin.y + screen.height as i32 - size.height as i32 - margin
+        origin_y + screen_h - win_h - margin
     };
 
     window
-        .set_position(tauri::PhysicalPosition::new(x, y))
+        .set_position(tauri::LogicalPosition::new(x, y))
         .map_err(|err| err.to_string())?;
     window.set_always_on_top(true).map_err(|e| e.to_string())?;
 

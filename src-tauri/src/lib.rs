@@ -145,6 +145,9 @@ struct AppState {
     audio_capture: Mutex<Option<AudioCaptureHandle>>,
     streaming: Mutex<Option<StreamingHandle>>,
     push_to_talk: Mutex<Option<hotkey::HotkeyListener>>,
+    /// Where the voice bar is docked. A resize has to re-apply this, otherwise
+    /// the pill grows away from its edge instead of staying against it.
+    voice_bar_anchor: Mutex<panel::PanelAnchor>,
 }
 
 /// A running streaming-transcription worker. Dropping it stops the worker.
@@ -1852,6 +1855,15 @@ fn show_voice_bar_passive(app: AppHandle) -> Result<(), String> {
     window.show().map_err(|err| err.to_string())
 }
 
+/// Move the voice bar to an absolute logical position while dragging.
+#[tauri::command]
+fn move_voice_bar(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
+    let window = app
+        .get_webview_window("voice-bar")
+        .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
+    panel::move_to(&window, x, y)
+}
+
 /// Snap the voice bar to whichever screen edge it currently sits nearest.
 ///
 /// Deliberately computed in Rust from the window's own position and its
@@ -1891,7 +1903,10 @@ fn snap_voice_bar(app: AppHandle, margin: Option<i32>) -> Result<String, String>
     let name = format!("{vertical}-{horizontal}");
     let target = panel::PanelAnchor::parse(&name)
         .ok_or_else(|| format!("Unknown panel anchor '{name}'."))?;
-    panel::anchor(&window, target, margin.unwrap_or(18), true)?;
+    panel::anchor(&window, target, margin.unwrap_or(18), false)?;
+    if let Ok(mut slot) = app.state::<AppState>().voice_bar_anchor.lock() {
+        *slot = target;
+    }
     Ok(name)
 }
 
@@ -1911,7 +1926,24 @@ fn resize_voice_bar(app: AppHandle, width: f64, height: f64) -> Result<(), Strin
     let height = height.max(28.0).min(400.0);
     window
         .set_size(tauri::LogicalSize::new(width, height))
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+
+    // Re-dock immediately. Growing the window without re-applying the anchor
+    // leaves it expanding away from its edge — on a HiDPI screen by the scale
+    // factor too, which is what made the pill drift toward the middle.
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let physical = tauri::PhysicalSize::new(
+        (width * scale).round() as u32,
+        (height * scale).round() as u32,
+    );
+    let anchor = app
+        .state::<AppState>()
+        .voice_bar_anchor
+        .lock()
+        .map(|value| *value)
+        .unwrap_or(panel::PanelAnchor::BottomCenter);
+    panel::reposition(&window, anchor, 18, Some(physical))?;
+    Ok(())
 }
 
 /// Anchor the voice bar to a screen edge. Returns what the platform actually
@@ -1927,7 +1959,11 @@ fn anchor_voice_bar(
         .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
     let anchor = panel::PanelAnchor::parse(&anchor)
         .ok_or_else(|| format!("Unknown panel anchor '{anchor}'."))?;
-    panel::anchor(&window, anchor, margin.unwrap_or(16), true)
+    let status = panel::anchor(&window, anchor, margin.unwrap_or(16), false)?;
+    if let Ok(mut slot) = app.state::<AppState>().voice_bar_anchor.lock() {
+        *slot = anchor;
+    }
+    Ok(status)
 }
 
 #[tauri::command]
@@ -2009,13 +2045,14 @@ pub fn run() {
                 audio_capture: Mutex::new(None),
                 streaming: Mutex::new(None),
                 push_to_talk: Mutex::new(None),
+                voice_bar_anchor: Mutex::new(panel::PanelAnchor::BottomCenter),
             });
 
             // Anchor the voice bar while it is still unmapped. gtk-layer-shell
             // must claim the surface before the GTK window is realized, which
             // is why the window is declared `visible: false` in the config.
             if let Some(bar) = app.get_webview_window("voice-bar") {
-                match panel::anchor(&bar, panel::PanelAnchor::BottomCenter, 24, true) {
+                match panel::anchor(&bar, panel::PanelAnchor::BottomCenter, 24, false) {
                     Ok(status) => eprintln!(
                         "[voice-bar] anchored (layer_shell={}): {}",
                         status.layer_shell, status.detail
@@ -2059,6 +2096,7 @@ pub fn run() {
             anchor_voice_bar,
             resize_voice_bar,
             snap_voice_bar,
+            move_voice_bar,
             hide_voice_bar,
             show_settings_window
         ])

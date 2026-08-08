@@ -108,6 +108,11 @@ export async function resizeVoiceBar(width: number, height: number): Promise<voi
   await invokeCommand("resize_voice_bar", { width, height });
 }
 
+/** Move the bar to an absolute logical position (used while dragging). */
+export async function moveVoiceBar(x: number, y: number): Promise<void> {
+  await invokeCommand("move_voice_bar", { x: Math.round(x), y: Math.round(y) });
+}
+
 /** Snap to the nearest edge of the monitor the bar is actually on. */
 export async function snapVoiceBar(margin?: number): Promise<string> {
   return invokeCommand<string>("snap_voice_bar", { margin });

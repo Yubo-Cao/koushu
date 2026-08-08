@@ -14,6 +14,27 @@ use gtk_layer_shell::{Edge, Layer, LayerShell};
 
 use super::{PanelAnchor, PanelStatus};
 
+/// Move a layer surface to an absolute logical position.
+///
+/// Wayland forbids a client from setting its own window position — that is why
+/// `set_position` silently does nothing and the bar sat wherever KWin dropped
+/// it. layer-shell is the exception: anchoring to the top-left corner turns the
+/// top and left margins into absolute coordinates, which is what makes
+/// dragging possible at all here.
+pub fn move_to(window: &tauri::WebviewWindow, x: i32, y: i32) -> Result<(), String> {
+    let gtk_window = window.gtk_window().map_err(|err| err.to_string())?;
+    if !gtk_window.is_layer_window() {
+        return Err("voice bar is not a layer-shell surface".to_string());
+    }
+    gtk_window.set_anchor(Edge::Top, true);
+    gtk_window.set_anchor(Edge::Left, true);
+    gtk_window.set_anchor(Edge::Bottom, false);
+    gtk_window.set_anchor(Edge::Right, false);
+    gtk_window.set_layer_shell_margin(Edge::Left, x.max(0));
+    gtk_window.set_layer_shell_margin(Edge::Top, y.max(0));
+    Ok(())
+}
+
 pub fn anchor(
     window: &tauri::WebviewWindow,
     anchor: PanelAnchor,

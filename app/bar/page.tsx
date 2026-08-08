@@ -10,6 +10,7 @@ import {
   hideVoiceBar,
   listAudioInputs,
   resizeVoiceBar,
+  moveVoiceBar,
   showVoiceBarPassive,
   snapVoiceBar,
   startAudioCapture,
@@ -52,6 +53,12 @@ export default function VoiceBar() {
   const pttBusyRef = useRef(false);
   const collapseTimerRef = useRef<number | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
 
   const recording = phase === "listening";
   const expanded = phase !== "idle";
@@ -216,29 +223,37 @@ export default function VoiceBar() {
     }
   }
 
-  // startDragging() hands the gesture to the compositor, so no mousemove or
-  // mouseup arrives here — the drag ends when the pointer is released
-  // somewhere we never see. Poll briefly for the button coming back up, then
-  // let Rust snap using the real monitor geometry.
   useEffect(() => {
     if (!dragging) return;
-    let stopped = false;
-    const finish = () => {
-      if (stopped) return;
-      stopped = true;
+    let frame = 0;
+    const onMove = (event: MouseEvent) => {
+      const origin = dragRef.current;
+      if (!origin) return;
+      // Coalesce to one move per frame; each one is an IPC round trip.
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        void moveVoiceBar(
+          origin.originX + (event.screenX - origin.startX),
+          origin.originY + (event.screenY - origin.startY),
+        ).catch(() => {});
+      });
+    };
+    const onUp = () => {
       setDragging(false);
+      dragRef.current = null;
       void snapVoiceBar(18)
         .then(setAnchor)
         .catch(() => {});
     };
-    const onUp = () => finish();
+    window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     window.addEventListener("blur", onUp);
-    const timer = window.setTimeout(finish, 4000);
     return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       window.removeEventListener("blur", onUp);
-      window.clearTimeout(timer);
     };
   }, [dragging]);
 
@@ -251,20 +266,21 @@ export default function VoiceBar() {
     >
       <div
         ref={shellRef}
-        // Native window drag, so the pill actually follows the cursor. An
-        // HTML5 drag would not move the window at all, so it stays suppressed.
+        // Wayland will not let a client position its own window, so the
+        // native drag cannot work here. layer-shell margins can, so the
+        // pointer delta is turned into an absolute position instead.
         draggable={false}
         onDragStart={(event) => event.preventDefault()}
-        onMouseDown={async (event) => {
+        onMouseDown={(event) => {
           if (event.button !== 0) return;
           event.preventDefault();
+          dragRef.current = {
+            startX: event.screenX,
+            startY: event.screenY,
+            originX: window.screenX,
+            originY: window.screenY,
+          };
           setDragging(true);
-          try {
-            const { getCurrentWindow } = await import("@tauri-apps/api/window");
-            await getCurrentWindow().startDragging();
-          } catch {
-            /* dragging is a nicety; never let it break the bar */
-          }
         }}
         className={[
           "inline-flex select-none items-center gap-2 rounded-full border border-black/10",
