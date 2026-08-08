@@ -347,7 +347,7 @@ export default function Home() {
 
   if (!bootstrap) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-panel text-sm text-smoke">
+      <main className="flex min-h-screen items-center justify-center text-sm text-smoke">
         Loading Fun ASR Desktop
       </main>
     );
@@ -364,200 +364,246 @@ export default function Home() {
   }
 
   return (
-    <main className="grid h-dvh min-h-0 grid-cols-[260px_minmax(0,1fr)] bg-panel lg:grid-cols-[280px_minmax(0,1fr)]">
-      <aside className="flex min-h-0 flex-col border-r border-line bg-[#e9ece5]">
-        <div className="border-b border-line p-4">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h1 className="text-lg font-semibold">Fun ASR</h1>
-              <p className="text-xs text-smoke">0.0.2 Linux</p>
+    /*
+      Chrome floats, content flows under it. The sidebar header, the toolbar and
+      the transcript bar are sticky glass inside their own scroll containers, so
+      what they blur is the real content sliding beneath them — the one place in
+      this app where backdrop-filter has something to work with. An opaque strip
+      that merely reserves space would look the same standing still and dead in
+      motion.
+    */
+    <main className="grid h-dvh min-h-0 grid-cols-[254px_minmax(0,1fr)] lg:grid-cols-[282px_minmax(0,1fr)]">
+      <aside className="hairline-r relative min-h-0">
+        <div className="scrollbar-thin absolute inset-0 flex flex-col overflow-y-auto">
+          <div className="glass-chrome sticky top-0 z-20 px-4 pt-4 pb-3">
+            <div className="mb-3.5 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h1 className="t-title text-[17px] font-semibold">Fun ASR</h1>
+                <p className="t-micro text-[11px] text-smoke">0.0.2 Linux</p>
+              </div>
+              <Button
+                variant="ghost"
+                className="h-9 w-9 px-0"
+                title="Settings"
+                onClick={showSettingsWindow}
+              >
+                <Settings size={17} />
+              </Button>
             </div>
-            <Button variant="ghost" className="h-9 w-9 px-0" title="Settings" onClick={showSettingsWindow}>
-              <Settings size={17} />
+            <Button
+              variant="primary"
+              className="w-full"
+              icon={<Plus size={16} />}
+              disabled={busy === "session"}
+              onClick={newSession}
+            >
+              New Session
             </Button>
           </div>
-          <Button className="w-full" icon={<Plus size={16} />} disabled={busy === "session"} onClick={newSession}>
-            New Session
-          </Button>
-        </div>
 
-        <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-3">
-          {groupedSessions.map(([date, dateSessions]) => (
-            <section key={date} className="mb-4">
-              <p className="mb-2 px-2 text-xs font-semibold uppercase text-smoke">{date}</p>
-              <div className="space-y-1">
-                {dateSessions.map((session) => (
-                  <button
-                    key={session.id}
-                    className={[
-                      "block w-full rounded-md px-3 py-2 text-left text-sm transition",
-                      activeSession?.id === session.id
-                        ? "bg-paper font-medium text-ink shadow-sm"
-                        : "text-smoke hover:bg-paper/60 hover:text-ink",
-                    ].join(" ")}
-                    onClick={() => setActiveSession(session)}
-                  >
-                    <span className="block truncate">{session.title}</span>
-                    <span className="mt-1 block text-xs text-smoke">{session.language}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          ))}
+          <div className="flex-1 px-3 pt-3 pb-4">
+            {groupedSessions.map(([date, dateSessions]) => (
+              <section key={date} className="mb-5">
+                <p className="t-micro mb-2 px-2 text-[10.5px] font-semibold tracking-wider uppercase text-faint">
+                  {date}
+                </p>
+                <div className="space-y-0.5">
+                  {dateSessions.map((session) => (
+                    <button
+                      key={session.id}
+                      className={[
+                        "press block w-full rounded-md px-3 py-2 text-left",
+                        activeSession?.id === session.id
+                          ? "glass rim font-medium text-ink"
+                          : "text-ink-2 hover:bg-fill",
+                      ].join(" ")}
+                      onClick={() => setActiveSession(session)}
+                    >
+                      <span className="block truncate text-[13.5px]">{session.title}</span>
+                      <span className="t-micro mt-0.5 block text-[11px] text-smoke">
+                        {session.language}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
         </div>
       </aside>
 
-      <section className="grid min-h-0 grid-rows-[auto_1fr_auto]">
-        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line bg-paper px-5 py-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="min-w-0">
-              <h2 className="truncate text-base font-semibold">{activeSession?.title || "No session"}</h2>
-              <p className="text-xs text-smoke">{status}</p>
-              {download?.modelId === modelId ? (
-                <div className="mt-2 w-[min(520px,calc(100vw-340px))] min-w-[280px]">
-                  <DownloadProgress download={download} onPause={download.active ? pauseDownload : undefined} />
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-            <Select value={modelId} onChange={setModelId}>
-              {bootstrap.models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-            </Select>
-            <Select value={language} onChange={setLanguage}>
-              {languages.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </Select>
-            <Select value={audioInputId} onChange={setAudioInputId} disabled={recording}>
-              <option value="">{defaultInput ? `Default mic - ${defaultInput.name}` : "Default mic"}</option>
-              {audioInputs.map((input) => (
-                <option key={input.id} value={input.id}>
-                  {input.name}
-                </option>
-              ))}
-            </Select>
-            <Button
-              icon={<Download size={16} />}
-              disabled={busy !== null || activeModel?.status === "installed"}
-              onClick={installModel}
-            >
-              {activeModel?.status === "installed" ? "Installed" : activeModel?.status === "paused" || download?.paused ? "Resume" : "Download"}
-            </Button>
-            <Button icon={<PanelTop size={16} />} onClick={showVoiceBar}>
-              Voice Bar
-            </Button>
-          </div>
-        </header>
-
-        <div className="scrollbar-thin min-h-0 overflow-y-auto px-6 py-5">
-          {transcripts.length === 0 && !partial ? (
-            <div className="flex h-full items-center justify-center text-center">
-              <div>
-                <Mic className="mx-auto mb-4 text-rust" size={34} />
-                <p className="text-lg font-semibold">Start a local transcription session</p>
-                <p className="mt-2 max-w-md text-sm leading-6 text-smoke">
-                  Saved transcripts appear here by date. Use the model and language controls before recording.
-                </p>
+      <section className="relative min-h-0">
+        <div className="scrollbar-thin absolute inset-0 flex flex-col overflow-y-auto">
+          <header className="glass-chrome sticky top-0 z-20 flex flex-wrap items-start justify-between gap-3 px-5 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="min-w-0">
+                <h2 className="t-head truncate text-[15px] font-semibold">
+                  {activeSession?.title || "No session"}
+                </h2>
+                <p className="t-micro text-[11.5px] text-smoke">{status}</p>
+                {download?.modelId === modelId ? (
+                  <div className="mt-2 w-[min(520px,calc(100vw-340px))] min-w-[280px]">
+                    <DownloadProgress
+                      download={download}
+                      onPause={download.active ? pauseDownload : undefined}
+                    />
+                  </div>
+                ) : null}
               </div>
             </div>
-          ) : (
-            <div className="mx-auto max-w-3xl space-y-4">
-              {transcripts.map((transcript) => (
-                <article key={transcript.id} className="rounded-lg border border-line bg-paper p-4 shadow-sm">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div className="text-xs text-smoke">
-                      {new Date(transcript.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} -{" "}
-                      {transcript.language}
+
+            <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+              <Select value={modelId} onChange={setModelId}>
+                {bootstrap.models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name}
+                  </option>
+                ))}
+              </Select>
+              <Select value={language} onChange={setLanguage}>
+                {languages.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </Select>
+              <Select value={audioInputId} onChange={setAudioInputId} disabled={recording}>
+                <option value="">
+                  {defaultInput ? `Default mic - ${defaultInput.name}` : "Default mic"}
+                </option>
+                {audioInputs.map((input) => (
+                  <option key={input.id} value={input.id}>
+                    {input.name}
+                  </option>
+                ))}
+              </Select>
+              <Button
+                icon={<Download size={16} />}
+                disabled={busy !== null || activeModel?.status === "installed"}
+                onClick={installModel}
+              >
+                {activeModel?.status === "installed"
+                  ? "Installed"
+                  : activeModel?.status === "paused" || download?.paused
+                    ? "Resume"
+                    : "Download"}
+              </Button>
+              <Button icon={<PanelTop size={16} />} onClick={showVoiceBar}>
+                Voice Bar
+              </Button>
+            </div>
+          </header>
+
+          <div className="flex-1 px-6 py-6">
+            {transcripts.length === 0 && !partial ? (
+              <div className="flex h-full items-center justify-center text-center">
+                <div className="max-w-md">
+                  <div className="glass rim mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-[22px]">
+                    <Mic className="text-accent" size={28} />
+                  </div>
+                  <p className="t-title text-[19px] font-semibold">
+                    Start a local transcription session
+                  </p>
+                  <p className="t-body mt-2 text-[13.5px] text-smoke">
+                    Saved transcripts appear here by date. Use the model and language controls
+                    before recording.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="mx-auto max-w-3xl space-y-3.5">
+                {transcripts.map((transcript) => (
+                  <article key={transcript.id} className="glass rim rounded-lg p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="tnum t-micro text-[11.5px] text-smoke">
+                        {new Date(transcript.created_at).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}{" "}
+                        · {transcript.language}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          className="h-8 px-2 text-xs"
+                          title={
+                            llm?.baseUrl ? "Format as Markdown" : "Configure an LLM in Settings first"
+                          }
+                          disabled={!llm?.baseUrl || transcript.id in formatting}
+                          onClick={() => void runFormat(transcript.id, transcript.text)}
+                        >
+                          <Wand2 size={14} />
+                          <span className="ml-1">
+                            {transcript.id in formatting
+                              ? "Formatting"
+                              : transcript.formatted_text
+                                ? "Redo"
+                                : "Format"}
+                          </span>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="h-8 w-8 px-0"
+                          title="Copy"
+                          onClick={() => copyTranscript(transcript.formatted_text || transcript.text)}
+                        >
+                          <Copy size={15} />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        className="h-8 px-2 text-xs"
-                        title={llm?.baseUrl ? "Format as Markdown" : "Configure an LLM in Settings first"}
-                        disabled={!llm?.baseUrl || transcript.id in formatting}
-                        onClick={() => void runFormat(transcript.id, transcript.text)}
-                      >
-                        <Wand2 size={14} />
-                        <span className="ml-1">
+                    <p className="t-body whitespace-pre-wrap text-[14.5px]">{transcript.text}</p>
+                    {transcript.id in formatting || transcript.formatted_text ? (
+                      <div className="mt-3 border-t border-line-soft pt-3">
+                        <div className="t-micro mb-2 flex items-center gap-2 text-[11.5px] font-medium text-moss">
+                          <Wand2 size={13} />
                           {transcript.id in formatting
                             ? "Formatting"
-                            : transcript.formatted_text
-                              ? "Redo"
-                              : "Format"}
-                        </span>
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="h-8 w-8 px-0"
-                        title="Copy"
-                        onClick={() =>
-                          copyTranscript(transcript.formatted_text || transcript.text)
-                        }
-                      >
-                        <Copy size={15} />
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="whitespace-pre-wrap text-[15px] leading-7">{transcript.text}</p>
-                  {transcript.id in formatting || transcript.formatted_text ? (
-                    <div className="mt-3 border-t border-line pt-3">
-                      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-moss">
-                        <Wand2 size={13} />
-                        {transcript.id in formatting
-                          ? "Formatting"
-                          : `Formatted · ${transcript.formatted_preset || "typeset"}`}
+                            : `Formatted · ${transcript.formatted_preset || "typeset"}`}
+                        </div>
+                        <p className="t-body whitespace-pre-wrap text-[14.5px]">
+                          {formatting[transcript.id] ?? transcript.formatted_text}
+                        </p>
                       </div>
-                      <p className="whitespace-pre-wrap text-[15px] leading-7">
-                        {formatting[transcript.id] ?? transcript.formatted_text}
-                      </p>
+                    ) : null}
+                    {formatError[transcript.id] ? (
+                      <p className="mt-2 text-[13px] text-rust">{formatError[transcript.id]}</p>
+                    ) : null}
+                  </article>
+                ))}
+                {partial ? (
+                  <article className="glass rim rounded-lg p-4 ring-1 ring-rust/25">
+                    <div className="t-micro mb-2 flex items-center gap-2 text-[11.5px] font-medium text-rust">
+                      <span className="flex h-1.5 w-1.5 rounded-pill bg-rust" />
+                      Live partial
                     </div>
-                  ) : null}
-                  {formatError[transcript.id] ? (
-                    <p className="mt-2 text-sm text-[#a43b2e]">{formatError[transcript.id]}</p>
-                  ) : null}
-                </article>
-              ))}
-              {partial ? (
-                <article className="rounded-lg border border-dashed border-rust/50 bg-[#f8f3e9] p-4">
-                  <div className="mb-2 flex items-center gap-2 text-xs font-medium text-rust">
-                    <Wand2 size={14} />
-                    Live partial
-                  </div>
-                  <p className="whitespace-pre-wrap text-[15px] leading-7">{partial}</p>
-                </article>
-              ) : null}
-            </div>
-          )}
-        </div>
-
-        <footer className="border-t border-line bg-paper p-4">
-          <div className="mx-auto flex max-w-4xl flex-wrap items-center gap-3">
-            <Button
-              variant={recording ? "danger" : "primary"}
-              icon={recording ? <Square size={16} /> : <Mic size={16} />}
-              disabled={busy !== null && busy !== "transcribe"}
-              onClick={recording ? stopRecording : startRecording}
-            >
-              {recording ? "Stop" : "Talk"}
-            </Button>
-            <InputLevel level={inputLevel} active={recording} />
-            <div className="min-w-[220px] flex-1 text-sm text-smoke">
-              {recording
-                ? "Speak normally. The meter should move while you talk."
-                : audioInputs.length
-                  ? "Select a microphone, then press Talk."
-                  : "No microphone input detected by the native audio backend."}
-            </div>
+                    <p className="t-body whitespace-pre-wrap text-[14.5px]">{partial}</p>
+                  </article>
+                ) : null}
+              </div>
+            )}
           </div>
-        </footer>
+
+          <footer className="glass-chrome sticky bottom-0 z-20 mt-auto px-4 py-3">
+            <div className="mx-auto flex max-w-4xl flex-wrap items-center gap-3">
+              <Button
+                variant={recording ? "danger" : "primary"}
+                icon={recording ? <Square size={16} /> : <Mic size={16} />}
+                disabled={busy !== null && busy !== "transcribe"}
+                onClick={recording ? stopRecording : startRecording}
+              >
+                {recording ? "Stop" : "Talk"}
+              </Button>
+              <InputLevel level={inputLevel} active={recording} />
+              <div className="min-w-[200px] flex-1 text-[12.5px] text-smoke">
+                {recording
+                  ? "Speak normally. The meter should move while you talk."
+                  : audioInputs.length
+                    ? "Select a microphone, then press Talk."
+                    : "No microphone input detected by the native audio backend."}
+              </div>
+            </div>
+          </footer>
+        </div>
       </section>
     </main>
   );
@@ -565,14 +611,17 @@ export default function Home() {
 
 function InputLevel({ level, active }: { level: AudioLevelInfo; active: boolean }) {
   return (
-    <div className="flex min-w-[220px] items-center gap-3 rounded-md border border-line bg-panel px-3 py-2">
+    <div className="glass rim flex min-w-[210px] items-center gap-3 rounded-md px-3 py-1.5">
       <div className="flex-1">
-        <div className="mb-1 flex items-center justify-between text-xs text-smoke">
+        <div className="t-micro mb-1 flex items-center justify-between text-[11px] text-smoke">
           <span>Input</span>
-          <span>{active ? formatDb(level.db) : "idle"}</span>
+          <span className="tnum">{active ? formatDb(level.db) : "idle"}</span>
         </div>
-        <div className="h-2 overflow-hidden rounded-full bg-[#d5dccf]">
-          <div className="h-full rounded-full bg-moss transition-all" style={{ width: `${active ? level.percent : 0}%` }} />
+        <div className="h-1.5 overflow-hidden rounded-pill bg-track">
+          <div
+            className="h-full rounded-pill bg-moss transition-all duration-100 ease-glass"
+            style={{ width: `${active ? level.percent : 0}%` }}
+          />
         </div>
       </div>
     </div>
@@ -597,7 +646,7 @@ function Select({
 }) {
   return (
     <select
-      className="h-9 max-w-[190px] rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt disabled:opacity-60"
+      className="field h-9 max-w-[190px] rounded-pill pl-3.5 pr-8 text-[13px]"
       value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}

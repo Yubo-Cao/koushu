@@ -13,16 +13,17 @@ export function Button({
   ...props
 }: ButtonProps) {
   const variants = {
-    primary: "border-rust bg-rust text-white hover:bg-[#874327]",
-    secondary: "border-line bg-paper text-ink hover:bg-[#eef3ea]",
-    ghost: "border-transparent bg-transparent text-ink hover:bg-black/5",
-    danger: "border-[#d4a296] bg-[#fff4f1] text-[#9b2f22] hover:bg-[#ffe7e0]",
+    primary: "btn-primary",
+    secondary: "",
+    ghost: "btn-ghost",
+    danger: "btn-danger",
   };
 
   return (
     <button
       className={[
-        "inline-flex h-9 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
+        "btn press inline-flex h-9 items-center justify-center gap-2 rounded-pill",
+        "text-[13px] font-medium disabled:cursor-not-allowed disabled:opacity-45",
         variants[variant],
         className,
       ].join(" ")}

@@ -25,6 +25,36 @@ import type {
 } from "@/lib/types";
 import { languages } from "@/lib/types";
 
+/**
+ * Known-good endpoint/model pairs.
+ *
+ * Groq first: whisper-large-v3-turbo is the cheapest fast option and the one
+ * measured here at ~800 ms for 30 s of audio. Ollama needs no key at all,
+ * which makes the fully-offline cloud path one click away.
+ */
+const ASR_PRESETS = [
+  {
+    label: "Groq",
+    baseUrl: "https://api.groq.com/openai/v1",
+    model: "whisper-large-v3-turbo",
+  },
+  {
+    label: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o-transcribe",
+  },
+  {
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "whisper-large-v3-turbo",
+  },
+  {
+    label: "Local (Ollama)",
+    baseUrl: "http://localhost:11434/v1",
+    model: "whisper",
+  },
+];
+
 export default function SettingsPage() {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -181,15 +211,15 @@ export default function SettingsPage() {
   }
 
   if (!bootstrap) {
-    return <main className="flex min-h-screen items-center justify-center bg-panel text-sm text-smoke">Loading settings</main>;
+    return <main className="flex min-h-screen items-center justify-center text-sm text-smoke">Loading settings</main>;
   }
 
   return (
-    <main className="min-h-dvh overflow-y-auto bg-panel px-5 py-5 md:px-6">
+    <main className="min-h-dvh overflow-y-auto px-5 py-5 md:px-6">
       <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold">Settings</h1>
-          <p className="mt-1 text-sm text-smoke">Models, defaults, transcript storage, and Linux paste diagnostics.</p>
+          <h1 className="t-display text-[26px] font-semibold">Settings</h1>
+          <p className="mt-1.5 text-[13px] text-smoke">Models, defaults, transcript storage, and Linux paste diagnostics.</p>
         </div>
         <Button icon={<RefreshCw size={16} />} onClick={refresh}>
           Refresh
@@ -199,17 +229,17 @@ export default function SettingsPage() {
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
         <section className="space-y-4">
           <Panel title="Models">
-            <div className="divide-y divide-line">
+            <div className="divide-y divide-line-soft">
               {bootstrap.models.map((model) => (
                 <div key={model.id} className="grid gap-3 py-4 first:pt-0 last:pb-0 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <HardDrive size={16} className="text-moss" />
-                      <h2 className="font-semibold">{model.name}</h2>
+                      <h2 className="text-[14px] font-semibold">{model.name}</h2>
                     </div>
-                    <p className="mt-1 text-sm text-smoke">{model.repo_id}</p>
-                    <p className="mt-1 truncate text-xs text-smoke">{model.local_path}</p>
-                    {model.last_error ? <p className="mt-2 text-sm text-[#a43b2e]">{model.last_error}</p> : null}
+                    <p className="mt-1 text-[13px] text-smoke">{model.repo_id}</p>
+                    <p className="mt-1 truncate font-mono text-[11px] text-faint">{model.local_path}</p>
+                    {model.last_error ? <p className="mt-2 text-[13px] text-rust">{model.last_error}</p> : null}
                     {download?.modelId === model.id ? (
                       <div className="mt-3 max-w-xl">
                         <DownloadProgress
@@ -220,7 +250,7 @@ export default function SettingsPage() {
                     ) : null}
                   </div>
                   <div className="flex shrink-0 items-center justify-end gap-3">
-                    <span className="text-sm text-smoke">{formatBytes(model.size_bytes)}</span>
+                    <span className="tnum text-[12.5px] text-smoke">{formatBytes(model.size_bytes)}</span>
                     <Button
                       icon={<Download size={16} />}
                       disabled={busy !== null || model.status === "installed"}
@@ -236,10 +266,10 @@ export default function SettingsPage() {
 
           <Panel title="Defaults">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <label className="text-sm">
-                <span className="mb-2 block font-medium">Model</span>
+              <label className="text-[13px]">
+                <span className="t-micro mb-1.5 block text-[11.5px] font-medium text-smoke">Model</span>
                 <select
-                  className="h-10 w-full rounded-md border border-line bg-paper px-3 outline-none focus:border-cobalt"
+                  className="field h-10 w-full pl-3.5 pr-9 text-[13px]"
                   value={defaultModel}
                   onChange={(event) => setDefaultModel(event.target.value)}
                 >
@@ -250,10 +280,10 @@ export default function SettingsPage() {
                   ))}
                 </select>
               </label>
-              <label className="text-sm">
-                <span className="mb-2 block font-medium">Language</span>
+              <label className="text-[13px]">
+                <span className="t-micro mb-1.5 block text-[11.5px] font-medium text-smoke">Language</span>
                 <select
-                  className="h-10 w-full rounded-md border border-line bg-paper px-3 outline-none focus:border-cobalt"
+                  className="field h-10 w-full pl-3.5 pr-9 text-[13px]"
                   value={defaultLanguage}
                   onChange={(event) => setDefaultLanguage(event.target.value)}
                 >
@@ -287,14 +317,14 @@ export default function SettingsPage() {
               <Info label="Compute" value="CPU only" />
               <Info label="Platform" value={`${bootstrap.platform.os} ${bootstrap.platform.arch}`} />
             </div>
-            <p className="mt-3 text-sm leading-5 text-smoke">
+            <p className="t-body mt-3 text-[13px] text-smoke">
               Runs entirely on the CPU. No GPU, no CUDA, and no Python are needed or used.
             </p>
           </Panel>
 
           <Panel title="Cloud transcription">
-            <p className="mb-3 text-sm leading-5 text-smoke">
-              Optional. Any OpenAI-compatible <code>/v1/audio/transcriptions</code>
+            <p className="t-body mb-3 text-[13px] text-smoke">
+              Optional. Any OpenAI-compatible <code>/v1/audio/transcriptions</code>{" "}
               endpoint (OpenAI, Groq, or a local whisper server). Select
               &ldquo;Cloud transcription&rdquo; as the model to use it. The local
               model keeps running the live preview either way.
@@ -302,7 +332,7 @@ export default function SettingsPage() {
             <div className="space-y-3">
               <Field label="Base URL">
                 <input
-                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  className="field h-9 w-full px-3 text-[13px]"
                   placeholder="https://api.groq.com/openai/v1"
                   value={asrBaseUrl}
                   onChange={(event) => setAsrBaseUrl(event.target.value)}
@@ -310,7 +340,7 @@ export default function SettingsPage() {
               </Field>
               <Field label="Model">
                 <input
-                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  className="field h-9 w-full px-3 text-[13px]"
                   placeholder="whisper-large-v3-turbo"
                   value={asrModel}
                   onChange={(event) => setAsrModel(event.target.value)}
@@ -318,7 +348,7 @@ export default function SettingsPage() {
               </Field>
               <Field label="Language hint (blank = autodetect)">
                 <input
-                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  className="field h-9 w-full px-3 text-[13px]"
                   placeholder="leave blank for code-switched speech"
                   value={asrLanguage}
                   onChange={(event) => setAsrLanguage(event.target.value)}
@@ -327,7 +357,7 @@ export default function SettingsPage() {
               <Field label="API key">
                 <input
                   type="password"
-                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  className="field h-9 w-full px-3 text-[13px]"
                   placeholder="Leave blank to keep the stored key"
                   value={asrKeyDraft}
                   onChange={(event) => setAsrKeyDraft(event.target.value)}
@@ -337,7 +367,7 @@ export default function SettingsPage() {
           </Panel>
 
           <Panel title="Markdown formatting">
-            <p className="mb-3 text-sm leading-5 text-smoke">
+            <p className="t-body mb-3 text-[13px] text-smoke">
               Optional. Any OpenAI-compatible endpoint works, including a local
               server. Transcripts are kept as spoken; the formatted version is
               stored alongside them.
@@ -345,7 +375,7 @@ export default function SettingsPage() {
             <div className="space-y-3">
               <Field label="Base URL">
                 <input
-                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  className="field h-9 w-full px-3 text-[13px]"
                   placeholder="http://localhost:11434/v1"
                   value={llmBaseUrl}
                   onChange={(event) => setLlmBaseUrl(event.target.value)}
@@ -353,7 +383,7 @@ export default function SettingsPage() {
               </Field>
               <Field label="Model">
                 <input
-                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  className="field h-9 w-full px-3 text-[13px]"
                   placeholder="qwen2.5:7b"
                   value={llmModel}
                   onChange={(event) => setLlmModel(event.target.value)}
@@ -362,7 +392,7 @@ export default function SettingsPage() {
               <Field label={llm?.hasApiKey ? "API key (stored)" : "API key"}>
                 <input
                   type="password"
-                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  className="field h-9 w-full px-3 text-[13px]"
                   placeholder={llm?.hasApiKey ? "Leave blank to keep" : "Optional for local servers"}
                   value={apiKeyDraft}
                   onChange={(event) => setApiKeyDraft(event.target.value)}
@@ -382,7 +412,7 @@ export default function SettingsPage() {
               ) : null}
               <Field label="Preset">
                 <select
-                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  className="field h-9 w-full pl-3.5 pr-9 text-[13px]"
                   value={llmPreset}
                   onChange={(event) => setLlmPreset(event.target.value)}
                 >
@@ -393,11 +423,11 @@ export default function SettingsPage() {
                   ))}
                 </select>
               </Field>
-              <p className="text-xs leading-5 text-smoke">
+              <p className="t-body text-[11.5px] text-smoke">
                 {llm?.presets.find((preset) => preset.id === llmPreset)?.description}
               </p>
             </div>
-            <p className="mt-3 text-xs leading-5 text-smoke">
+            <p className="t-body mt-3 text-[11.5px] text-smoke">
               The key is stored in the system keychain, not in the app database.
             </p>
           </Panel>
@@ -423,7 +453,7 @@ export default function SettingsPage() {
             </Button>
           </Panel>
 
-          {message ? <p className="rounded-md border border-line bg-paper p-3 text-sm text-smoke">{message}</p> : null}
+          {message ? <p className="glass rim rounded-md p-3 text-[13px] text-smoke">{message}</p> : null}
         </aside>
       </div>
     </main>
@@ -432,8 +462,8 @@ export default function SettingsPage() {
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-line bg-[#fbfcf8] p-4 shadow-sm">
-      <h2 className="mb-4 text-base font-semibold">{title}</h2>
+    <section className="glass rim rounded-lg p-4">
+      <h2 className="t-head mb-4 text-[14.5px] font-semibold">{title}</h2>
       {children}
     </section>
   );
@@ -449,10 +479,10 @@ function Toggle({
   onChange: (value: boolean) => void;
 }) {
   return (
-    <label className="mb-3 flex items-center justify-between gap-4 text-sm">
+    <label className="mb-3 flex items-center justify-between gap-4 text-[13px]">
       <span>{label}</span>
       <input
-        className="h-4 w-4 accent-[#50715f]"
+        className="h-4 w-4 accent-accent"
         type="checkbox"
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
@@ -464,7 +494,7 @@ function Toggle({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-smoke">{label}</span>
+      <span className="t-micro mb-1.5 block text-[11.5px] font-medium text-smoke">{label}</span>
       {children}
     </label>
   );
@@ -472,9 +502,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="mb-3 flex items-start justify-between gap-4 text-sm">
+    <div className="mb-2.5 flex items-start justify-between gap-4 text-[13px]">
       <span className="text-smoke">{label}</span>
-      <span className="max-w-[190px] text-right font-medium">{value}</span>
+      <span className="max-w-[190px] text-right font-medium text-ink">{value}</span>
     </div>
   );
 }

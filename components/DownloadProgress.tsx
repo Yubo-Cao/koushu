@@ -17,25 +17,25 @@ export function DownloadProgress({ download, onPause }: DownloadProgressProps) {
       : null;
 
   return (
-    <div className="rounded-md border border-line bg-[#eef3ea] p-3">
+    <div className="glass rim rounded-md p-3">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-ink">{download.message}</p>
-          <p className="mt-1 text-xs text-smoke">
+          <p className="truncate text-[13px] font-medium text-ink">{download.message}</p>
+          <p className="tnum t-micro mt-0.5 text-[11.5px] text-smoke">
             {formatDownloadProgress(download.downloadedBytes, download.totalBytes)}
             {percent !== null ? ` · ${percent.toFixed(0)}%` : ""}
           </p>
         </div>
         {download.active && onPause ? (
-          <Button className="h-8 shrink-0 px-2" variant="secondary" icon={<Pause size={14} />} onClick={onPause}>
+          <Button className="h-8 shrink-0 px-2.5" icon={<Pause size={14} />} onClick={onPause}>
             Pause
           </Button>
         ) : null}
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-[#d5dccf]">
+      <div className="h-1.5 overflow-hidden rounded-pill bg-track">
         <div
           className={[
-            "h-full rounded-full bg-moss transition-all",
+            "h-full rounded-pill bg-accent transition-all duration-300 ease-glass",
             percent === null ? "w-1/3 animate-pulse" : "",
           ].join(" ")}
           style={percent !== null ? { width: `${percent}%` } : undefined}

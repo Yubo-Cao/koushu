@@ -271,18 +271,32 @@ export default function VoiceBar() {
       data-transparent="true"
       className="flex h-screen w-screen items-center justify-center bg-transparent"
     >
+      {/*
+        Clear glass, not frosted glass. This window is transparent and cut to
+        the pill's bounds, so backdrop-filter has nothing in the page to sample
+        — the desktop belongs to the compositor. What sells the material is
+        therefore actually being see-through, plus a specular rim; every knob
+        lives in the --pill-* variables in globals.css, and the frosted profile
+        switches on with data-desktop-blur once a compositor blurs behind us.
+
+        No shadow: the window hugs the pill and would slice it off. Width must
+        stay intrinsic (inline-flex, no w-full) so the ResizeObserver above
+        measures the pill and not the viewport.
+      */}
       <div
         ref={shellRef}
         className={[
-          "inline-flex select-none items-center gap-2 rounded-full border border-black/10",
-          "bg-paper/95 py-1.5 pl-1.5 pr-2.5",
+          "glass-pill rim inline-flex select-none items-center gap-2 rounded-pill",
+          "py-1.5 pl-1.5 pr-2",
         ].join(" ")}
         title={hotkey?.trigger ?? ""}
       >
         <button
           className={[
-            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors",
-            recording ? "bg-rust text-white" : "bg-black/5 text-ink hover:bg-black/10",
+            "press flex h-7 w-7 shrink-0 items-center justify-center rounded-pill",
+            recording
+              ? "bg-rust text-white shadow-[inset_0_1px_0_0_oklch(1_0_0/0.4)]"
+              : "bg-fill text-ink hover:bg-fill-strong shadow-[inset_0_1px_0_0_var(--spec-top)]",
           ].join(" ")}
           onClick={(event) => {
             event.stopPropagation();
@@ -301,33 +315,35 @@ export default function VoiceBar() {
 
         {/* Idle is just the button and the binding, nothing more. */}
         {!expanded ? (
-          <span className="whitespace-nowrap text-[11px] font-medium text-smoke">
+          <span className="t-micro rounded-md bg-fill px-1.5 py-[3px] text-[10.5px] font-medium whitespace-nowrap text-smoke">
             {hotkey?.backend === "unavailable" ? "no hotkey" : hotkey?.trigger || "…"}
           </span>
         ) : null}
 
         {phase === "listening" ? (
-          <span className="flex h-5 items-center gap-[2px]" aria-label="input level">
+          <span className="flex h-5 items-center gap-[2.5px]" aria-label="input level">
             {[0.45, 0.75, 1, 0.75, 0.45].map((weight, i) => (
               <span
                 key={i}
-                className="w-[3px] rounded-full bg-rust/85 transition-all duration-100"
+                className="w-[3px] rounded-pill bg-rust transition-all duration-100 ease-glass"
                 style={{ height: `${Math.max(3, (level / 100) * 20 * weight)}px` }}
               />
             ))}
           </span>
         ) : null}
 
+        {/* leading-none clips CJK ascenders; 1.35 keeps 中文 and Latin aligned
+            on the same baseline without growing the pill. */}
         {expanded && (partial || status) ? (
-          <span className="max-w-[380px] truncate whitespace-nowrap text-[12px] leading-none text-ink">
+          <span className="vibrant max-w-[380px] truncate text-[12.5px] leading-[1.35] whitespace-nowrap">
             {partial || status}
           </span>
         ) : null}
 
         <button
           className={[
-            "shrink-0 rounded px-1 text-smoke/50 hover:text-ink",
-            dragging ? "cursor-grabbing text-ink" : "cursor-grab",
+            "shrink-0 rounded-md px-0.5 py-1 transition-colors duration-150",
+            dragging ? "cursor-grabbing text-ink" : "cursor-grab text-faint hover:text-ink",
           ].join(" ")}
           title={`Drag to move · ${anchor}`}
           onMouseDown={startDrag}
@@ -337,7 +353,7 @@ export default function VoiceBar() {
 
         {expanded ? (
           <button
-            className="shrink-0 text-[13px] leading-none text-smoke/60 hover:text-ink"
+            className="press flex h-5 w-5 shrink-0 items-center justify-center rounded-pill text-[13px] leading-none text-faint hover:bg-fill hover:text-ink"
             title="Hide"
             onClick={(event) => {
               event.stopPropagation();

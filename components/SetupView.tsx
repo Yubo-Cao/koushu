@@ -97,23 +97,23 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
   }
 
   return (
-    <main className="min-h-dvh overflow-y-auto bg-panel">
+    <main className="min-h-dvh overflow-y-auto">
       <section className="mx-auto flex min-h-dvh max-w-6xl flex-col px-5 py-6 md:px-6 md:py-8">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-semibold text-rust">Fun ASR Desktop 0.0.2</p>
-            <h1 className="mt-3 max-w-3xl text-3xl font-semibold leading-tight text-ink md:text-4xl">
+            <p className="t-micro text-[13px] font-semibold text-accent">Fun ASR Desktop 0.0.2</p>
+            <h1 className="t-display mt-3 max-w-3xl text-[30px] font-semibold text-ink md:text-[38px]">
               Welcome to local voice transcription.
             </h1>
           </div>
-          <div className="rounded-md border border-line bg-paper px-3 py-2 text-sm text-smoke">
+          <div className="glass rim rounded-pill px-3.5 py-2 text-[13px] text-smoke">
             {bootstrap.platform.os} {bootstrap.platform.arch}
           </div>
         </header>
 
         <div className="grid flex-1 grid-cols-1 gap-6 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(340px,400px)] lg:gap-8 lg:py-8">
           <section className="flex flex-col justify-center">
-            <p className="max-w-2xl text-lg leading-8 text-smoke">
+            <p className="t-body max-w-2xl text-[16px] text-smoke">
               Talk into your microphone, get fast local transcripts, keep history on this machine, and use the floating bar to paste text into any app.
             </p>
 
@@ -125,16 +125,16 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
             </div>
           </section>
 
-          <aside className="flex min-w-0 flex-col rounded-lg border border-line bg-paper p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-4 border-b border-line pb-4">
+          <aside className="glass rim flex min-w-0 flex-col rounded-lg p-5">
+            <div className="flex items-start justify-between gap-4 border-b border-line-soft pb-4">
               <div>
-                <h2 className="text-lg font-semibold">Install Default Model</h2>
-                <p className="mt-1 text-sm leading-5 text-smoke">Fun-ASR-Nano GGUF Q4_K from Hugging Face</p>
+                <h2 className="t-title text-[17px] font-semibold">Install Default Model</h2>
+                <p className="mt-1 text-[13px] text-smoke">Fun-ASR-Nano GGUF Q4_K from Hugging Face</p>
               </div>
-              {installed ? <Check className="shrink-0 text-moss" size={24} /> : <Download className="shrink-0 text-rust" size={24} />}
+              {installed ? <Check className="shrink-0 text-moss" size={24} /> : <Download className="shrink-0 text-accent" size={24} />}
             </div>
 
-            <div className="space-y-4 py-5 text-sm">
+            <div className="space-y-4 py-5 text-[13.5px]">
               <Info label="Runtime" value={bootstrap.platform.bundled_asr ? "Bundled CPU runtime" : "Runtime missing"} />
               <Info label="Model" value={model?.name || "Fun-ASR-Nano GGUF Q4_K"} />
               <Info label="Download" value="about 897 MB" />
@@ -147,9 +147,9 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
                 <DownloadProgress download={download} onPause={download.active ? pauseDownload : undefined} />
               </div>
             ) : message ? (
-              <p className="mt-auto rounded-md border border-line bg-[#eef3ea] p-3 text-sm leading-5 text-smoke">{message}</p>
+              <p className="t-body mt-auto rounded-md bg-fill p-3 text-[13px] text-smoke">{message}</p>
             ) : (
-              <div className="mt-auto rounded-md border border-line bg-[#eef3ea] p-3 text-sm leading-5 text-smoke">
+              <div className="t-body mt-auto rounded-md bg-fill p-3 text-[13px] text-smoke">
                 The runtime is bundled with the app. The model is downloaded once and stored in app data.
               </div>
             )}

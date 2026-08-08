@@ -1,16 +1,263 @@
 @import "tailwindcss";
 
-@theme {
-  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
-  --color-ink: #18202f;
-  --color-panel: #eef0ea;
-  --color-paper: #fbfcf8;
-  --color-line: #ccd2c8;
-  --color-rust: #9d4f31;
-  --color-moss: #50715f;
-  --color-cobalt: #375a8c;
-  --color-smoke: #6f7683;
+/* ==========================================================================
+   Liquid Glass — design tokens
+   ==========================================================================
+
+   Two facts about the target platform shape everything below.
+
+   1. `backdrop-filter` works in WebKitGTK — verified by rendering, not by
+      CSS.supports: on 2.52.5 a blurred surface genuinely dissolves striped
+      content behind it while an unfiltered control right beside it stays
+      crisp. But the filter samples the *page's* compositing result. It can
+      frost transcript text scrolling under a toolbar; it can never frost the
+      desktop, because the compositor does not hand page content those pixels.
+
+   2. The voice bar's window is transparent and cut to the pill, so there is
+      nothing in the page behind it and blur is inert there. Glass without blur
+      has to earn the read a different way: stay genuinely see-through and let
+      the desktop supply the colour. Piling on opacity and grey gradients to
+      protect legibility is what turns glass into painted metal.
+
+   So the material rule throughout: the glass contributes as little colour of
+   its own as possible, the edge is a specular highlight rather than a drawn
+   border, and whatever is behind does the work.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* Ink ------------------------------------------------------------------ */
+  --c-ink: oklch(0.24 0.017 264);
+  --c-ink-2: oklch(0.44 0.014 264);
+  --c-smoke: oklch(0.556 0.013 264);
+  --c-faint: oklch(0.68 0.011 264);
+
+  /* Accents -------------------------------------------------------------- */
+  --c-accent: oklch(0.58 0.183 258);
+  --c-accent-ink: oklch(0.995 0 0);
+  --c-rust: oklch(0.577 0.196 26);
+  --c-moss: oklch(0.55 0.118 156);
+  --c-cobalt: var(--c-accent);
+
+  /* Ambient field — what the glass has to refract. Deliberately quiet: a few
+     wide, low-alpha blooms over a neutral base, not a gradient mesh. */
+  --ambient-base: oklch(0.945 0.009 264);
+  --ambient:
+    radial-gradient(115% 85% at 4% -8%, oklch(0.70 0.16 258 / 0.38) 0%, transparent 62%),
+    radial-gradient(95% 78% at 104% -2%, oklch(0.72 0.15 322 / 0.30) 0%, transparent 58%),
+    radial-gradient(125% 95% at 42% 110%, oklch(0.82 0.13 66 / 0.32) 0%, transparent 62%);
+
+  /* Glass — structural (sidebars, toolbars). These float over scrolling
+     content, which is the only place blur has anything to bite on, so they get
+     the widest radius. The fill is white with no hue and no gradient: any
+     grey ramp baked into the material reads as a painted panel. */
+  --glass-chrome-fill: oklch(1 0 0 / 0.5);
+  --glass-chrome-tint: linear-gradient(
+    180deg,
+    oklch(1 0 0 / 0.20) 0%,
+    oklch(1 0 0 / 0) 42%
+  );
+
+  /* Glass — raised (cards, popovers). Sits over the ambient field rather than
+     over content, so it leans a little denser to keep text comfortable. */
+  --glass-raised-fill: oklch(1 0 0 / 0.6);
+  --glass-raised-tint: linear-gradient(
+    180deg,
+    oklch(1 0 0 / 0.28) 0%,
+    oklch(1 0 0 / 0) 46%
+  );
+
+  /* The specular rim. `--rim` is the gradient painted into a 1px ring: bright
+     where light would catch the curve, nearly gone on the shaded flank. This
+     replaces a border — a uniform stroke is what makes a surface look framed
+     in metal. */
+  --rim: linear-gradient(
+    155deg,
+    oklch(1 0 0 / 0.95) 0%,
+    oklch(1 0 0 / 0.35) 28%,
+    oklch(0.55 0.02 264 / 0.10) 55%,
+    oklch(1 0 0 / 0.30) 82%,
+    oklch(1 0 0 / 0.70) 100%
+  );
+  --spec-top: oklch(1 0 0 / 0.55);
+  --spec-glow: oklch(1 0 0 / 0.22);
+  --spec-shade: oklch(0.20 0.03 264 / 0.10);
+
+  --blur-chrome: 44px;
+  --blur-raised: 32px;
+  --sat: 180%;
+
+  /* --- Voice-bar material ------------------------------------------------
+     Every knob for the floating bar lives here, so retuning it is a variable
+     change rather than a redesign.
+
+     The blur behind this window is done by the compositor, not by CSS
+     (`ext_background_effect_manager_v1`, requested from Rust). That is why
+     there is no backdrop-filter on `.glass-pill`: the filter can only sample
+     page content, and this window has none — it would cost a compositing layer
+     and buy nothing. The desktop arrives already blurred, so the material's
+     job is only to tint it, and it should barely do that.
+
+     `--pill-tint`/`--pill-alpha` are the whole material. The default is tuned
+     for a *sharp* desktop, because compositor blur cannot be assumed: the
+     request can succeed while nothing honours it (KWin advertises the protocol
+     from core, but the effect that consumes it is the built-in Blur, which the
+     user may have disabled or replaced). Measured on this machine, a 2px line
+     behind the bar came through pixel-identical in width — tinted, not
+     blurred. So the material has to hold contrast on its own, and blur is an
+     improvement rather than a prerequisite.
+
+     When blur is confirmed working, set data-desktop-blur="true" on <html> and
+     the profile below drops the alpha so the blurred desktop supplies the
+     colour instead. */
+  --pill-tint: 232 14% 8%; /* near-neutral; the desktop supplies the colour */
+  --pill-alpha: 0.46;
+  --pill-sat: 170%;
+  --pill-rim: var(--rim);
+  --pill-glow: oklch(1 0 0 / 0.24);
+  --pill-top: oklch(1 0 0 / 0.20);
+  --pill-text-shadow: 0 1px 2px oklch(0 0 0 / 0.45);
+
+  /* Hairlines and fills ---------------------------------------------------*/
+  --c-line: oklch(0.30 0.02 264 / 0.11);
+  --c-line-soft: oklch(0.30 0.02 264 / 0.07);
+  --c-fill: oklch(0.30 0.02 264 / 0.055);
+  --c-fill-strong: oklch(0.30 0.02 264 / 0.10);
+  --c-track: oklch(0.30 0.02 264 / 0.10);
+
+  /* Legacy names kept alive so no surface silently loses its colour. */
+  --c-paper: var(--glass-raised-fill);
+  --c-panel: var(--ambient-base);
+
+  /* Motion — critically damped by default. This curve settles without
+     overshoot; bounce is reserved for anything the user threw. */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-press: 110ms;
+  --dur-fast: 180ms;
+  --dur: 260ms;
+  --dur-slow: 400ms;
+
+  --r-pill: 999px;
+  --r-lg: 20px;
+  --r-md: 14px;
+  --r-sm: 9px;
 }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --c-ink: oklch(0.97 0.004 264);
+    --c-ink-2: oklch(0.80 0.010 264);
+    --c-smoke: oklch(0.685 0.012 264);
+    --c-faint: oklch(0.56 0.012 264);
+
+    --c-accent: oklch(0.72 0.155 256);
+    --c-accent-ink: oklch(0.16 0.02 264);
+    --c-rust: oklch(0.695 0.175 27);
+    --c-moss: oklch(0.755 0.145 158);
+
+    --ambient-base: oklch(0.168 0.012 264);
+    --ambient:
+      radial-gradient(115% 85% at 4% -8%, oklch(0.55 0.17 262 / 0.42) 0%, transparent 62%),
+      radial-gradient(95% 78% at 104% -2%, oklch(0.52 0.15 322 / 0.32) 0%, transparent 58%),
+      radial-gradient(125% 95% at 42% 110%, oklch(0.55 0.12 62 / 0.26) 0%, transparent 62%);
+
+    --glass-chrome-fill: oklch(0.24 0.012 264 / 0.5);
+    --glass-chrome-tint: linear-gradient(
+      180deg,
+      oklch(1 0 0 / 0.09) 0%,
+      oklch(1 0 0 / 0) 45%
+    );
+
+    --glass-raised-fill: oklch(0.30 0.012 264 / 0.55);
+    --glass-raised-tint: linear-gradient(
+      180deg,
+      oklch(1 0 0 / 0.11) 0%,
+      oklch(1 0 0 / 0) 46%
+    );
+
+    --rim: linear-gradient(
+      155deg,
+      oklch(1 0 0 / 0.55) 0%,
+      oklch(1 0 0 / 0.16) 28%,
+      oklch(1 0 0 / 0.04) 55%,
+      oklch(1 0 0 / 0.14) 82%,
+      oklch(1 0 0 / 0.38) 100%
+    );
+    --spec-top: oklch(1 0 0 / 0.22);
+    --spec-glow: oklch(1 0 0 / 0.10);
+    --spec-shade: oklch(0 0 0 / 0.24);
+
+    --c-line: oklch(1 0 0 / 0.11);
+    --c-line-soft: oklch(1 0 0 / 0.07);
+    --c-fill: oklch(1 0 0 / 0.07);
+    --c-fill-strong: oklch(1 0 0 / 0.13);
+    --c-track: oklch(0 0 0 / 0.30);
+  }
+}
+
+/* Frosted profile — only when the desktop behind the bar is genuinely blurred.
+
+   Worth switching on because blur does the legibility work that opacity is
+   doing by default, which lets the material get out of the way: a third of the
+   tint, no text shadow, colour coming from the blurred desktop rather than
+   from the fill. That is the difference between smoked glass and frosted
+   glass.
+
+   Gate it on the effect being observed, not on the protocol request returning
+   success — those are not the same thing. */
+:root[data-desktop-blur="true"] {
+  --pill-alpha: 0.24;
+  --pill-glow: oklch(1 0 0 / 0.3);
+  --pill-text-shadow: none;
+}
+
+@theme inline {
+  /* Latin first, CJK behind it, so mixed runs take their Latin glyphs from a
+     UI face and only fall through to Noto/PingFang for Han. `system-ui` is
+     deliberately not at the front: on this Linux box fontconfig resolves it to
+     Noto Sans CJK, whose Latin is wide and flat for interface text. */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text",
+    "Segoe UI", Inter, "Adwaita Sans", "Noto Sans", Roboto, "Helvetica Neue",
+    Arial, "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC",
+    "Noto Sans CJK SC", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono:
+    ui-monospace, "SF Mono", "Maple Mono NF CN", "Fira Code", "DejaVu Sans Mono",
+    monospace;
+
+  --color-ink: var(--c-ink);
+  --color-ink-2: var(--c-ink-2);
+  --color-smoke: var(--c-smoke);
+  --color-faint: var(--c-faint);
+  --color-accent: var(--c-accent);
+  --color-accent-ink: var(--c-accent-ink);
+  --color-rust: var(--c-rust);
+  --color-moss: var(--c-moss);
+  --color-cobalt: var(--c-cobalt);
+  --color-line: var(--c-line);
+  --color-line-soft: var(--c-line-soft);
+  --color-fill: var(--c-fill);
+  --color-fill-strong: var(--c-fill-strong);
+  --color-track: var(--c-track);
+  --color-paper: var(--c-paper);
+  --color-panel: var(--c-panel);
+
+  --radius-pill: var(--r-pill);
+  --radius-lg: var(--r-lg);
+  --radius-md: var(--r-md);
+  --radius-sm: var(--r-sm);
+
+  --ease-glass: var(--ease);
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
 
 * {
   box-sizing: border-box;
@@ -23,9 +270,17 @@ body {
 
 body {
   margin: 0;
-  background: #e4e9e2;
-  color: var(--color-ink);
+  color: var(--c-ink);
   font-family: var(--font-sans);
+  /* CJK sets on a taller body than Latin and needs the extra leading; 1.6 is
+     comfortable for both without looking airy in dense UI. */
+  line-height: 1.6;
+  font-synthesis-weight: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  background: var(--ambient-base);
+  background-image: var(--ambient);
+  background-attachment: fixed;
 }
 
 button,
@@ -33,23 +288,421 @@ select,
 textarea,
 input {
   font: inherit;
+  color: inherit;
 }
 
 button {
   cursor: default;
 }
 
-.scrollbar-thin {
-  scrollbar-width: thin;
-  scrollbar-color: #b9afa1 transparent;
+/* Tabular figures wherever a number is being watched change — dB readouts,
+   percentages, byte counts — so digits do not jitter the layout. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
-/*
- * The voice bar is a frameless, transparent overlay window. The body
- * background above would otherwise paint an opaque themed rectangle around the
- * pill, which is visible against the desktop.
- */
+/* Tracking is size-specific. Large Latin reads too loose as it grows; small
+   text reads too tight. CJK wants neither, so these stay small enough to be
+   safe in mixed runs. */
+.t-display {
+  letter-spacing: -0.021em;
+  line-height: 1.12;
+}
+.t-title {
+  letter-spacing: -0.014em;
+  line-height: 1.25;
+}
+.t-head {
+  letter-spacing: -0.008em;
+  line-height: 1.35;
+}
+.t-body {
+  letter-spacing: 0;
+  line-height: 1.72;
+}
+.t-micro {
+  letter-spacing: 0.012em;
+}
+
+/* Text sitting on glass. Flat grey loses to a moving backdrop, so foreground
+   text over a translucent surface gets contrast and a touch more weight
+   instead of relying on colour alone. */
+.vibrant {
+  color: var(--c-ink);
+  font-weight: 500;
+}
+.vibrant-dim {
+  color: var(--c-ink-2);
+}
+
+::selection {
+  background: color-mix(in oklab, var(--c-accent) 28%, transparent);
+  color: var(--c-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* ==========================================================================
+   Materials
+   ========================================================================== */
+
+/* Component classes live in the `components` layer on purpose. Unlayered
+   rules beat every Tailwind utility, which silently made `rounded-pill` and
+   `px-0` no-ops at call sites — the copy button's icon was being squeezed to
+   2px by a padding it had explicitly overridden. Inside the layer, utilities
+   win, which is what anyone writing className expects. */
+@layer components {
+  /* The specular rim, shared by every glass surface. A 1px ring with its own
+     middle masked out, filled with a gradient so the highlight travels around
+     the curve. Painted above content on purpose: it is the edge of the glass,
+     and nothing should sit on top of it. */
+  .rim::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border-radius: inherit;
+    padding: 1px;
+    background: var(--rim);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Real glass: something in the page is behind it and gets frosted. Never nest
+     one of these inside another — two translucent layers stacked stop being
+     legible. */
+  .glass {
+    position: relative;
+    background-color: var(--glass-raised-fill);
+    background-image: var(--glass-raised-tint);
+    -webkit-backdrop-filter: blur(var(--blur-raised)) saturate(var(--sat));
+    backdrop-filter: blur(var(--blur-raised)) saturate(var(--sat));
+    box-shadow:
+      inset 0 1px 0 0 var(--spec-top),
+      inset 0 0 18px -6px var(--spec-glow);
+  }
+
+  .glass-chrome {
+    position: relative;
+    background-color: var(--glass-chrome-fill);
+    background-image: var(--glass-chrome-tint);
+    -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(var(--sat));
+    backdrop-filter: blur(var(--blur-chrome)) saturate(var(--sat));
+    box-shadow: inset 0 1px 0 0 var(--spec-top);
+  }
+
+  /* The floating voice bar. Everything it looks like comes from the --pill-*
+     variables above.
+
+     Deliberately no backdrop-filter: the compositor blurs the desktop behind
+     this window already, and CSS cannot see that backdrop anyway. Deliberately
+     no outer shadow: the window is cut to the pill's bounds and would slice it
+     off. The pill carries its own dark colour context because it floats over
+     unknown desktop content — smoked glass with light text reads on a bright
+     wallpaper and a dark terminal alike, which no page-following palette does. */
+  .glass-pill {
+    position: relative;
+    isolation: isolate;
+    color: oklch(1 0 0 / 0.96);
+    background-color: hsl(var(--pill-tint) / var(--pill-alpha));
+    box-shadow:
+      inset 0 1px 0 var(--pill-top),
+      inset 0 0 12px -4px var(--pill-glow);
+    text-shadow: var(--pill-text-shadow);
+
+    /* Retint the token layer locally: every `text-ink` / `bg-fill` utility inside
+       the pill resolves against these instead of the page palette. */
+    --rim: var(--pill-rim);
+    --c-ink: oklch(1 0 0 / 0.96);
+    --c-ink-2: oklch(1 0 0 / 0.78);
+    --c-smoke: oklch(1 0 0 / 0.72);
+    --c-faint: oklch(1 0 0 / 0.45);
+    --c-fill: oklch(1 0 0 / 0.14);
+    --c-fill-strong: oklch(1 0 0 / 0.22);
+    --spec-top: oklch(1 0 0 / 0.18);
+  }
+
+  /* A slow highlight travelling across the top of the material. This is the
+     "liquid" half of liquid glass — without it the surface reads as frosted
+     plastic. Purely decorative, so it never takes pointer events. */
+  .sheen > * {
+    position: relative;
+    z-index: 1;
+  }
+  .sheen::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(
+      100deg,
+      transparent 12%,
+      oklch(1 0 0 / 0.16) 42%,
+      oklch(1 0 0 / 0.05) 52%,
+      transparent 72%
+    );
+    opacity: 0.9;
+  }
+
+  /* Scroll edge effect instead of a hard rule: content fades as it slides under
+     floating chrome, rather than being cut by a 1px line. */
+  .edge-fade-top {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
+    mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
+  }
+
+  .hairline-b {
+    border-bottom: 1px solid var(--c-line-soft);
+  }
+  .hairline-t {
+    border-top: 1px solid var(--c-line-soft);
+  }
+  .hairline-r {
+    border-right: 1px solid var(--c-line-soft);
+  }
+
+  /* ==========================================================================
+     Controls
+     ========================================================================== */
+
+  /* Feedback belongs on the press, not the release. */
+  .press {
+    transition:
+      transform var(--dur-press) var(--ease-out),
+      background-color var(--dur-fast) var(--ease),
+      border-color var(--dur-fast) var(--ease),
+      color var(--dur-fast) var(--ease);
+  }
+  .press:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  /* Buttons carry the same material as the panels, one step lighter so they read
+     as the interactive layer. They do not declare their own backdrop-filter:
+     these sit on glass chrome already, and blurring a blurred surface is where
+     legibility falls apart. */
+  .btn {
+    --btn-fill: var(--c-fill);
+    --btn-border: var(--c-line);
+    background: var(--btn-fill);
+    border: 1px solid var(--btn-border);
+    color: var(--c-ink);
+    /* Default padding belongs here, not in a utility on the base className: a
+       utility cannot be overridden by another utility of the same property, so
+       a caller's `px-0` lost to the base `px-3.5`. From the components layer it
+       is overridable, which is the whole point of accepting a className. */
+    padding-inline: 0.875rem;
+    box-shadow:
+      inset 0 1px 0 0 var(--spec-top),
+      inset 0 -8px 14px -12px var(--spec-shade);
+  }
+  /* An icon must never be the thing that gives way when a button is narrow. */
+  .btn > svg {
+    flex: none;
+  }
+  .btn:hover:not(:disabled) {
+    --btn-fill: var(--c-fill-strong);
+  }
+
+  .btn-primary {
+    --btn-fill: var(--c-accent);
+    --btn-border: transparent;
+    color: var(--c-accent-ink);
+    box-shadow:
+      inset 0 1px 0 0 oklch(1 0 0 / 0.36),
+      inset 0 -10px 16px -12px oklch(0 0 0 / 0.22);
+  }
+  .btn-primary:hover:not(:disabled) {
+    --btn-fill: color-mix(in oklab, var(--c-accent) 88%, black);
+  }
+
+  .btn-danger {
+    --btn-fill: color-mix(in oklab, var(--c-rust) 15%, transparent);
+    --btn-border: color-mix(in oklab, var(--c-rust) 38%, transparent);
+    color: var(--c-rust);
+  }
+  .btn-danger:hover:not(:disabled) {
+    --btn-fill: color-mix(in oklab, var(--c-rust) 24%, transparent);
+  }
+
+  .btn-ghost {
+    --btn-fill: transparent;
+    --btn-border: transparent;
+    box-shadow: none;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    --btn-fill: var(--c-fill);
+  }
+
+  /* Native selects cannot be fully restyled in WebKit, but appearance:none plus
+     a drawn chevron gets them onto the same material as everything else. */
+  .field {
+    appearance: none;
+    -webkit-appearance: none;
+    background-color: var(--glass-raised-fill);
+    background-image: var(--glass-raised-tint);
+    border: 1px solid var(--c-line);
+    border-radius: var(--r-sm);
+    color: var(--c-ink);
+    box-shadow:
+      inset 0 1px 0 0 var(--spec-top),
+      inset 0 -10px 18px -14px var(--spec-shade);
+    transition:
+      border-color var(--dur-fast) var(--ease),
+      box-shadow var(--dur-fast) var(--ease);
+  }
+  .field:hover:not(:disabled) {
+    border-color: color-mix(in oklab, var(--c-ink) 22%, transparent);
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--c-accent);
+    box-shadow:
+      inset 0 1px 0 0 var(--spec-top),
+      0 0 0 3px color-mix(in oklab, var(--c-accent) 24%, transparent);
+  }
+  .field:disabled {
+    opacity: 0.55;
+  }
+
+  select.field {
+    padding-right: 2rem;
+    background-image:
+      url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 4.6 6 8l3.4-3.4' fill='none' stroke='%23888f9c' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
+      var(--glass-raised-tint);
+    background-repeat: no-repeat, no-repeat;
+    background-position:
+      right 0.6rem center,
+      0 0;
+    background-size:
+      12px 12px,
+      auto;
+  }
+
+  /* Inline code inside prose: a quiet chip, not a second typeface shouting. */
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    padding: 0.1em 0.36em;
+    border-radius: 5px;
+    background: var(--c-fill);
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--c-ink) 22%, transparent) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--c-ink) 20%, transparent);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* ==========================================================================
+   The transparent voice-bar window
+   ==========================================================================
+   The body background above would otherwise paint an opaque themed rectangle
+   around the pill, which is visible against the desktop. This rule is load
+   bearing — removing it brings back a grey box floating around the bar. */
 body:has(> div > main[data-transparent="true"]),
 body:has(main[data-transparent="true"]) {
   background: transparent;
+}
+
+/* ==========================================================================
+   User preferences
+   ========================================================================== */
+
+/* Reduced transparency is not "slightly less blur" — it means the material
+   stops being see-through. Fills go opaque and the blur is dropped entirely. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-chrome-fill: oklch(0.975 0.003 264);
+    --glass-raised-fill: oklch(0.995 0.002 264);
+    --glass-chrome-tint: none;
+    --glass-raised-tint: none;
+    --pill-alpha: 1;
+    --pill-blur: 0px;
+    --pill-text-shadow: none;
+    --pill-glow: transparent;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --glass-chrome-fill: oklch(0.225 0.012 264);
+      --glass-raised-fill: oklch(0.265 0.012 264);
+    }
+  }
+  .glass,
+  .glass-chrome,
+  .glass-pill,
+  .field {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .sheen::after {
+    display: none;
+  }
+  body {
+    background-image: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --c-line: oklch(0.30 0.02 264 / 0.42);
+    --c-line-soft: oklch(0.30 0.02 264 / 0.30);
+    --c-smoke: oklch(0.42 0.014 264);
+    --glass-chrome-fill: oklch(1 0 0 / 0.94);
+    --glass-raised-fill: oklch(1 0 0 / 0.96);
+    --pill-alpha: 0.88;
+    /* At high contrast the rim stops being a subtle highlight and becomes a
+       real, evenly readable edge. */
+    --rim: linear-gradient(155deg, oklch(1 0 0 / 0.95), oklch(1 0 0 / 0.65));
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --c-line: oklch(1 0 0 / 0.38);
+      --c-smoke: oklch(0.82 0.012 264);
+      --glass-chrome-fill: oklch(0.19 0.012 264 / 0.95);
+      --glass-raised-fill: oklch(0.24 0.012 264 / 0.96);
+    }
+  }
+}
+
+/* Reduced motion keeps the feedback and drops the travel. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  .press:active:not(:disabled) {
+    transform: none;
+  }
 }

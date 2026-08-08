@@ -151,9 +151,15 @@ pub fn enable_background_blur(window: &tauri::WebviewWindow) -> Result<(), Strin
     blur::enable_for(window)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub fn enable_background_blur(window: &tauri::WebviewWindow) -> Result<(), String> {
+    macos_panel::install_glass(window).map(|kind| {
+        eprintln!("[voice-bar] glass backing: {kind}");
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn enable_background_blur(_window: &tauri::WebviewWindow) -> Result<(), String> {
-    // macOS gets this from the NSVisualEffectView side instead.
     Ok(())
 }
 
