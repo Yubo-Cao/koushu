@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Mic, Square } from "lucide-react";
+import { GripVertical, Loader2, Mic, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_BACKEND } from "@/lib/backends";
 import {
@@ -10,9 +10,8 @@ import {
   hideVoiceBar,
   listAudioInputs,
   resizeVoiceBar,
-  moveVoiceBar,
+  anchorVoiceBar,
   showVoiceBarPassive,
-  snapVoiceBar,
   startAudioCapture,
   startPushToTalk,
   startStreamingTranscription,
@@ -44,7 +43,6 @@ export default function VoiceBar() {
   const [inputLevel, setInputLevel] = useState<AudioLevelInfo>(idleLevel);
   const [hotkey, setHotkey] = useState<HotkeyStatus | null>(null);
   const [anchor, setAnchor] = useState("bottom-center");
-  const [dragging, setDragging] = useState(false);
 
   const sessionIdRef = useRef<string | null>(null);
   const segmentsRef = useRef<string[]>([]);
@@ -53,12 +51,7 @@ export default function VoiceBar() {
   const pttBusyRef = useRef(false);
   const collapseTimerRef = useRef<number | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<{
-    startX: number;
-    startY: number;
-    originX: number;
-    originY: number;
-  } | null>(null);
+
 
   const recording = phase === "listening";
   const expanded = phase !== "idle";
@@ -223,39 +216,31 @@ export default function VoiceBar() {
     }
   }
 
-  useEffect(() => {
-    if (!dragging) return;
-    let frame = 0;
-    const onMove = (event: MouseEvent) => {
-      const origin = dragRef.current;
-      if (!origin) return;
-      // Coalesce to one move per frame; each one is an IPC round trip.
-      if (frame) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = 0;
-        void moveVoiceBar(
-          origin.originX + (event.screenX - origin.startX),
-          origin.originY + (event.screenY - origin.startY),
-        ).catch(() => {});
-      });
-    };
-    const onUp = () => {
-      setDragging(false);
-      dragRef.current = null;
-      void snapVoiceBar(18)
-        .then(setAnchor)
-        .catch(() => {});
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    window.addEventListener("blur", onUp);
-    return () => {
-      if (frame) window.cancelAnimationFrame(frame);
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      window.removeEventListener("blur", onUp);
-    };
-  }, [dragging]);
+  /**
+   * Docking positions, cycled by the grip.
+   *
+   * Free dragging is not offered because it cannot be made to feel right
+   * here: a layer-shell surface is positioned by margins relative to its own
+   * output, and the webview inside it has no reliable global pointer
+   * coordinates to derive them from. Deriving position from pointer *deltas*
+   * feeds the window's own movement back into the next delta, which is what
+   * made it jitter and jump to the other monitor. Six explicit stops are less
+   * clever and actually work.
+   */
+  const DOCKS = [
+    "bottom-center",
+    "bottom-right",
+    "top-right",
+    "top-center",
+    "top-left",
+    "bottom-left",
+  ];
+
+  function cycleDock() {
+    const next = DOCKS[(DOCKS.indexOf(anchor) + 1) % DOCKS.length];
+    setAnchor(next);
+    void anchorVoiceBar(next, 18).catch(() => {});
+  }
 
   const level = Math.max(0, Math.min(100, inputLevel.percent));
 
@@ -266,28 +251,11 @@ export default function VoiceBar() {
     >
       <div
         ref={shellRef}
-        // Wayland will not let a client position its own window, so the
-        // native drag cannot work here. layer-shell margins can, so the
-        // pointer delta is turned into an absolute position instead.
-        draggable={false}
-        onDragStart={(event) => event.preventDefault()}
-        onMouseDown={(event) => {
-          if (event.button !== 0) return;
-          event.preventDefault();
-          dragRef.current = {
-            startX: event.screenX,
-            startY: event.screenY,
-            originX: window.screenX,
-            originY: window.screenY,
-          };
-          setDragging(true);
-        }}
         className={[
           "inline-flex select-none items-center gap-2 rounded-full border border-black/10",
-          "bg-paper/95 py-1.5 pl-1.5 pr-3",
-          dragging ? "cursor-grabbing" : "cursor-grab",
+          "bg-paper/95 py-1.5 pl-1.5 pr-2.5",
         ].join(" ")}
-        title={`${hotkey?.trigger ?? ""} · drag to an edge to dock · ${anchor}`}
+        title={hotkey?.trigger ?? ""}
       >
         <button
           className={[
@@ -333,6 +301,17 @@ export default function VoiceBar() {
             {partial || status}
           </span>
         ) : null}
+
+        <button
+          className="shrink-0 rounded px-1 text-smoke/50 hover:text-ink"
+          title={`Dock: ${anchor} — click to move`}
+          onClick={(event) => {
+            event.stopPropagation();
+            cycleDock();
+          }}
+        >
+          <GripVertical size={13} />
+        </button>
 
         {expanded ? (
           <button
