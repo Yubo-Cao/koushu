@@ -25,3 +25,10 @@ serde_json = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-clipboard-manager = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Push-to-talk on Wayland: XDG Portal GlobalShortcuts over D-Bus, with a
+# direct evdev reader as the fallback when the portal refuses (it requires a
+# non-empty app id, which an uninstalled dev build does not have).
+zbus = { version = "5", default-features = false, features = ["tokio", "blocking-api"] }
+evdev = "0.13"

@@ -1,3 +1,21 @@
+pub mod hotkey;
+
+/// Test hook for `examples/ptt_probe.rs`: start a listener and hand back the
+/// resolved backend so the fallback chain can be exercised without the GUI.
+pub fn hotkey_start_for_probe<F>(
+    trigger: &str,
+    on_edge: F,
+) -> (hotkey::HotkeyBackend, String, String)
+where
+    F: Fn(hotkey::PttEdge) + Send + Sync + 'static,
+{
+    let listener = hotkey::start(trigger, on_edge);
+    let status = listener.status.clone();
+    // Leak deliberately: the probe process exits when it is done listening.
+    std::mem::forget(listener);
+    (status.backend, status.trigger, status.detail)
+}
+
 use arboard::Clipboard;
 use base64::{engine::general_purpose, Engine as _};
 use chrono::Local;
@@ -100,6 +118,7 @@ struct AppState {
     downloads: Mutex<HashMap<String, Arc<AtomicBool>>>,
     audio_capture: Mutex<Option<AudioCaptureHandle>>,
     streaming: Mutex<Option<StreamingHandle>>,
+    push_to_talk: Mutex<Option<hotkey::HotkeyListener>>,
 }
 
 /// A running streaming-transcription worker. Dropping it stops the worker.
@@ -808,6 +827,63 @@ fn start_streaming_transcription(
         stop,
         join: Some(join),
     });
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Push-to-talk
+// ---------------------------------------------------------------------------
+
+/// Default chord. Ctrl+Alt+Space avoids the desktop's own bindings and is easy
+/// to hold with one hand.
+const DEFAULT_PTT_TRIGGER: &str = "CTRL+ALT+space";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "event",
+    content = "data"
+)]
+enum PushToTalkEvent {
+    Pressed,
+    Released,
+}
+
+#[tauri::command]
+fn start_push_to_talk(
+    state: tauri::State<'_, AppState>,
+    trigger: Option<String>,
+    on_event: Channel<PushToTalkEvent>,
+) -> Result<hotkey::HotkeyStatus, String> {
+    let trigger = trigger
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_PTT_TRIGGER.to_string());
+
+    let listener = hotkey::start(&trigger, move |edge| {
+        let _ = on_event.send(match edge {
+            hotkey::PttEdge::Pressed => PushToTalkEvent::Pressed,
+            hotkey::PttEdge::Released => PushToTalkEvent::Released,
+        });
+    });
+    let status = listener.status.clone();
+
+    let mut slot = state
+        .push_to_talk
+        .lock()
+        .map_err(|_| "Push-to-talk lock poisoned".to_string())?;
+    // Replacing the previous listener drops it, releasing the old binding.
+    *slot = Some(listener);
+    Ok(status)
+}
+
+#[tauri::command]
+fn stop_push_to_talk(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut slot = state
+        .push_to_talk
+        .lock()
+        .map_err(|_| "Push-to-talk lock poisoned".to_string())?;
+    slot.take();
     Ok(())
 }
 
@@ -1562,6 +1638,7 @@ pub fn run() {
                 downloads: Mutex::new(HashMap::new()),
                 audio_capture: Mutex::new(None),
                 streaming: Mutex::new(None),
+                push_to_talk: Mutex::new(None),
             });
             Ok(())
         })
@@ -1573,6 +1650,8 @@ pub fn run() {
             stop_audio_capture,
             start_streaming_transcription,
             stop_streaming_transcription,
+            start_push_to_talk,
+            stop_push_to_talk,
             get_bootstrap,
             complete_onboarding,
             reset_onboarding,
