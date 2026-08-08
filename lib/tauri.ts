@@ -100,6 +100,17 @@ export async function stopPushToTalk(): Promise<void> {
   await invokeCommand("stop_push_to_talk");
 }
 
+export async function resizeVoiceBar(width: number, height: number): Promise<void> {
+  await invokeCommand("resize_voice_bar", { width, height });
+}
+
+export async function anchorVoiceBar(
+  anchor: string,
+  margin?: number,
+): Promise<{ anchored: boolean; layerShell: boolean; detail: string }> {
+  return invokeCommand("anchor_voice_bar", { anchor, margin });
+}
+
 export async function showVoiceBarPassive(): Promise<void> {
   await invokeCommand("show_voice_bar_passive");
 }

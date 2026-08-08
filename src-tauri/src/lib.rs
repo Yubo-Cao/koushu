@@ -1778,6 +1778,25 @@ fn show_voice_bar_passive(app: AppHandle) -> Result<(), String> {
     window.show().map_err(|err| err.to_string())
 }
 
+/// Resize the voice bar to fit its content.
+///
+/// The bar is a pill that grows only as much as its current state needs, so
+/// the window has to follow the DOM rather than sit at a fixed size. A
+/// layer-shell surface that is anchored to one edge (not stretched across it)
+/// takes its size from the client, so this works there too.
+#[tauri::command]
+fn resize_voice_bar(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
+    let window = app
+        .get_webview_window("voice-bar")
+        .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
+    // Guard against a mid-layout measurement collapsing the window to nothing.
+    let width = width.max(48.0).min(1600.0);
+    let height = height.max(28.0).min(400.0);
+    window
+        .set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|err| err.to_string())
+}
+
 /// Anchor the voice bar to a screen edge. Returns what the platform actually
 /// achieved, so the UI can tell a real panel from a positioned window.
 #[tauri::command]
@@ -1920,6 +1939,7 @@ pub fn run() {
             show_voice_bar,
             show_voice_bar_passive,
             anchor_voice_bar,
+            resize_voice_bar,
             hide_voice_bar,
             show_settings_window
         ])
@@ -2765,19 +2785,18 @@ fn low_priority_command(program: &Path) -> Command {
 }
 
 fn copy_text_native(text: &str) -> PasteResult {
-    if let Ok(mut clipboard) = Clipboard::new() {
-        if clipboard.set_text(text.to_string()).is_ok() {
-            return PasteResult {
-                copied: true,
-                pasted: false,
-                method: Some("arboard".to_string()),
-                message: "Copied to clipboard.".to_string(),
-                session_type: env::var("XDG_SESSION_TYPE").ok(),
-            };
-        }
-    }
+    let wayland = is_wayland_session();
 
-    let candidates: Vec<(&str, Vec<&str>)> = if is_wayland_session() {
+    // On Wayland the clipboard is *owned by a live process*: whoever set the
+    // selection must stay connected to serve it, and the moment they exit the
+    // selection is gone. An in-process `Clipboard` dropped at the end of this
+    // function therefore reports success and leaves the user with nothing to
+    // paste — which is exactly the bug this ordering fixes.
+    //
+    // `wl-copy` forks a background process that holds the selection until
+    // something replaces it, so it is the correct primary path here, not a
+    // fallback. On X11 arboard spawns its own owner thread and is fine.
+    let helpers: Vec<(&str, Vec<&str>)> = if wayland {
         vec![("wl-copy", vec![])]
     } else {
         vec![
@@ -2786,18 +2805,50 @@ fn copy_text_native(text: &str) -> PasteResult {
         ]
     };
 
-    for (program, args) in candidates {
-        if !command_exists(program) {
-            continue;
+    if wayland {
+        for (program, args) in &helpers {
+            if command_exists(program) && write_to_command(program, args, text).is_ok() {
+                return PasteResult {
+                    copied: true,
+                    pasted: false,
+                    method: Some((*program).to_string()),
+                    message: "Copied to clipboard.".to_string(),
+                    session_type: env::var("XDG_SESSION_TYPE").ok(),
+                };
+            }
         }
-        if write_to_command(program, &args, text).is_ok() {
+    }
+
+    if let Ok(mut clipboard) = Clipboard::new() {
+        if clipboard.set_text(text.to_string()).is_ok() {
+            // Under Wayland this is a last resort and may not survive; say so
+            // rather than claiming a clean copy.
+            let message = if wayland {
+                "Copied, but wl-clipboard is missing so it may not persist. Install wl-clipboard."
+            } else {
+                "Copied to clipboard."
+            };
             return PasteResult {
                 copied: true,
                 pasted: false,
-                method: Some(program.to_string()),
-                message: "Copied to clipboard.".to_string(),
+                method: Some("arboard".to_string()),
+                message: message.to_string(),
                 session_type: env::var("XDG_SESSION_TYPE").ok(),
             };
+        }
+    }
+
+    if !wayland {
+        for (program, args) in &helpers {
+            if command_exists(program) && write_to_command(program, args, text).is_ok() {
+                return PasteResult {
+                    copied: true,
+                    pasted: false,
+                    method: Some((*program).to_string()),
+                    message: "Copied to clipboard.".to_string(),
+                    session_type: env::var("XDG_SESSION_TYPE").ok(),
+                };
+            }
         }
     }
 
