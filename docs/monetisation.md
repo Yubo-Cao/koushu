@@ -86,11 +86,72 @@ And it never withholds: no feature is locked, no telemetry, no licence check at
 runtime. **A paid build that phones home is a worse product than the free one**,
 and it would undercut the offline guarantee that makes this worth using.
 
+## Trial: 120 minutes of speech
+
+The free build is fully functional for **120 minutes of transcribed speech**,
+with no time limit. After that it asks for a licence.
+
+**Minutes, not words.** Word counts do not survive contact with this app's
+users: Chinese has no word boundary, so 2000 "words" means something entirely
+different in Chinese than in English. Speech seconds are language-neutral, we
+already measure them with VAD, and they line up with cost if a managed tier
+ever exists.
+
+**Speech, not recording time.** Holding the key while thinking should not
+consume the trial, so the VAD segment total is what counts, not wall-clock
+capture length.
+
+**One dimension, not two.** A "7 days *or* N minutes, whichever first" trial
+puts most people into a wall on day one — daily dictation of 20–60 minutes is
+ordinary, and English speech runs 130–150 words per minute, so a 2000-word cap
+is 13–15 minutes: gone in a single session. The block would land before the
+habit forms, which is precisely before the product has proved anything. 120
+minutes with no clock lets people arrive at the limit at their own pace, by
+which point they know whether they want it.
+
+### Activation is offline
+
+Ed25519. A licence is signed with our private key and verified against a public
+key compiled into the client. **No server, no network check, no phoning home.**
+
+An online licence check would make the paid build worse than the free one and
+would break the offline guarantee that justifies the app existing. It is also
+unnecessary: anyone able to patch out a signature check can already build from
+source, and that person was never going to buy.
+
+### It is honest about being bypassable
+
+The trial counter lives in the client and can be removed by rebuilding. That is
+stated plainly rather than obfuscated. What is being sold is not access — the
+source is right there — but not having to do the work. Obfuscating a limit that
+cannot hold only makes the first serious interaction with the codebase an
+adversarial one.
+
 ## Tip jar
 
 A Stripe Payment Link in the About panel and the README. No integration: the
 link opens in the browser, Stripe hosts everything, nothing is unlocked and
 nothing is tracked.
+
+## Desktop blur on Linux, without depending on a plugin
+
+The bar asks for compositor blur through `ext_background_effect_manager_v1`, a
+cross-compositor staging protocol. On KDE this is consumed by KWin's **built-in**
+Blur effect, which is enabled by default — so on a stock KDE install the bar is
+blurred with no configuration at all.
+
+It does not work when the built-in effect has been replaced. A machine running
+`kwin-effects-better-blur-dx` with `blurEnabled=false` will bind the protocol
+successfully and blur nothing, because the effect that would have consumed the
+request is switched off. Those forks match windows by class instead, so the
+window class has to be added to their allow-list by hand.
+
+Worth noting how this was caught: the protocol request succeeds and the app
+logs "background blur enabled", which is true and useless — it reports that the
+compositor accepted the request, not that anything was blurred. It took
+measuring pixels behind the bar to see that an edge was tinted rather than
+blurred. A log line that can only say "the call returned" should not be phrased
+as if it confirms an outcome.
 
 ## Delivery
 
