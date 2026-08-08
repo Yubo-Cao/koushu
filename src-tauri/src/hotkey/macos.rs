@@ -29,6 +29,76 @@ use super::{HotkeyBackend, HotkeyStatus, PttEdge};
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> bool;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    static kCFTypeDictionaryKeyCallBacks: std::ffi::c_void;
+    static kCFTypeDictionaryValueCallBacks: std::ffi::c_void;
+    static kCFBooleanTrue: *const std::ffi::c_void;
+    fn CFDictionaryCreate(
+        allocator: *const std::ffi::c_void,
+        keys: *const *const std::ffi::c_void,
+        values: *const *const std::ffi::c_void,
+        num: isize,
+        key_cbs: *const std::ffi::c_void,
+        value_cbs: *const std::ffi::c_void,
+    ) -> *const std::ffi::c_void;
+    fn CFRelease(cf: *const std::ffi::c_void);
+    fn CFStringCreateWithCString(
+        allocator: *const std::ffi::c_void,
+        cstr: *const std::os::raw::c_char,
+        encoding: u32,
+    ) -> *const std::ffi::c_void;
+}
+
+/// Whether the app currently holds Accessibility permission.
+pub fn is_trusted() -> bool {
+    unsafe { AXIsProcessTrusted() }
+}
+
+/// Ask for Accessibility permission, showing the system prompt if it has not
+/// been answered yet.
+///
+/// Called at startup rather than on first use: without this permission the
+/// hotkey does nothing at all, and discovering that by holding a key and
+/// getting silence is a bad first run. The system shows its prompt only once
+/// ever — after that the user has to go to System Settings, which is why the
+/// UI also has to surface the state rather than relying on this alone.
+pub fn request_permission() -> bool {
+    unsafe {
+        if AXIsProcessTrusted() {
+            return true;
+        }
+        // kAXTrustedCheckOptionPrompt; built by name because the symbol is not
+        // exported in a form Rust can link to directly.
+        let key_name = std::ffi::CString::new("AXTrustedCheckOptionPrompt").unwrap();
+        // 0x0600 = kCFStringEncodingUTF8
+        let key = CFStringCreateWithCString(std::ptr::null(), key_name.as_ptr(), 0x0800_0100);
+        if key.is_null() {
+            return false;
+        }
+        let keys = [key];
+        let values = [kCFBooleanTrue];
+        let options = CFDictionaryCreate(
+            std::ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            &kCFTypeDictionaryKeyCallBacks as *const _,
+            &kCFTypeDictionaryValueCallBacks as *const _,
+        );
+        let trusted = if options.is_null() {
+            AXIsProcessTrusted()
+        } else {
+            let result = AXIsProcessTrustedWithOptions(options);
+            CFRelease(options);
+            result
+        };
+        CFRelease(key);
+        trusted
+    }
 }
 
 /// macOS virtual key codes are a fixed hardware-derived layout, not ASCII, so

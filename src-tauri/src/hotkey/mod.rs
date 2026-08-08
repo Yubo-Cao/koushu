@@ -77,6 +77,35 @@ impl Drop for HotkeyListener {
     }
 }
 
+/// Ask the platform for whatever permission the hotkey needs, prompting if it
+/// has not been answered yet. Returns whether it is now granted.
+///
+/// macOS needs Accessibility for CGEventTap. Linux needs nothing up front: the
+/// portal prompts on its own when a shortcut is bound, and the evdev fallback
+/// depends on group membership, which no runtime prompt can grant.
+pub fn request_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::request_permission()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+/// Whether the hotkey permission is currently held.
+pub fn has_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::is_trusted()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 /// Start listening. `on_edge` is called from a background thread.
 ///
 /// Linux tries the portal first and falls back to evdev, so a `tauri dev`

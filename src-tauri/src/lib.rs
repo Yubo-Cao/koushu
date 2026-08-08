@@ -1252,6 +1252,19 @@ fn start_push_to_talk(
     Ok(status)
 }
 
+/// Whether the hotkey permission is held, and a way to ask again. The UI needs
+/// both: the system prompt appears only once ever, so after a decline the only
+/// route is System Settings and the app has to say so.
+#[tauri::command]
+fn hotkey_permission() -> bool {
+    hotkey::has_permission()
+}
+
+#[tauri::command]
+fn request_hotkey_permission() -> bool {
+    hotkey::request_permission()
+}
+
 #[tauri::command]
 fn stop_push_to_talk(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut slot = state
@@ -2311,11 +2324,26 @@ fn show_settings_window(app: AppHandle) -> Result<(), String> {
         return window.set_focus().map_err(|err| err.to_string());
     }
 
-    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("/settings".into()))
+    let mut builder = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("/settings".into()))
         .title("Fun ASR Settings")
         .inner_size(1080.0, 760.0)
         .min_inner_size(960.0, 640.0)
-        .center()
+        .center();
+
+    // Match the main window: content runs under the traffic lights on macOS,
+    // and the app draws its own header on Linux.
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        builder = builder.decorations(false);
+    }
+
+    builder
         .build()
         .map_err(|err| err.to_string())?;
     Ok(())
@@ -2379,6 +2407,29 @@ pub fn run() {
                 voice_bar_drag: Mutex::new(None),
             });
 
+            // Ask for the hotkey permission at startup. Without it push-to-talk
+            // is silently inert, and finding that out by holding a key and
+            // getting nothing is the worst possible first run. No-op where the
+            // platform needs no up-front grant.
+            if !hotkey::request_permission() {
+                eprintln!(
+                    "[hotkey] permission not granted yet; push-to-talk stays off until it is"
+                );
+            }
+
+            // Client-side decorations on Linux. macOS is handled declaratively
+            // by titleBarStyle: Overlay, which keeps the traffic lights while
+            // letting content run under them — dropping decorations entirely
+            // there would mean reimplementing close/minimise/zoom, and a
+            // hand-drawn imitation never matches the platform's behaviour or
+            // its accessibility affordances.
+            #[cfg(target_os = "linux")]
+            for label in ["main", "settings"] {
+                if let Some(window) = app.get_webview_window(label) {
+                    let _ = window.set_decorations(false);
+                }
+            }
+
             // Anchor the voice bar while it is still unmapped. gtk-layer-shell
             // must claim the surface before the GTK window is realized, which
             // is why the window is declared `visible: false` in the config.
@@ -2403,6 +2454,8 @@ pub fn run() {
             stop_streaming_transcription,
             start_push_to_talk,
             stop_push_to_talk,
+            hotkey_permission,
+            request_hotkey_permission,
             get_trial_status,
             activate_license,
             get_license,
@@ -2524,6 +2577,20 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
             INSERT INTO transcripts_fts(rowid, text) VALUES (new.rowid, new.text);
         END;
         "#,
+    )?;
+
+    // Drop sessions that never captured anything.
+    //
+    // A session is created the moment recording starts, so any push-to-talk
+    // that picked up no speech — a mis-hit, a false trigger, a moment of
+    // silence — leaves an empty row behind. They accumulate quickly and make
+    // the sidebar useless. Only sessions older than an hour are removed, so a
+    // session being recorded into right now is never touched.
+    conn.execute(
+        "DELETE FROM sessions
+          WHERE NOT EXISTS (SELECT 1 FROM transcripts t WHERE t.session_id = sessions.id)
+            AND started_at < datetime('now', '-1 hour')",
+        [],
     )?;
 
     // Two-layer transcripts: raw ASR text plus an optional LLM-formatted
@@ -2945,7 +3012,81 @@ fn insert_transcript_inner(
         ],
     )
     .map_err(|err| err.to_string())?;
+
+    // Name the session after what was actually said.
+    //
+    // A sidebar of "Voice 15:41 / Voice 14:13 / Voice 13:02" carries no
+    // information at all — every row looks identical and finding anything
+    // means opening them one by one. The first thing spoken is almost always
+    // the best short label, and it costs nothing to derive.
+    if status == "final" && !text.trim().is_empty() {
+        let title = summarize_for_title(text);
+        if !title.is_empty() {
+            // Only rename while the session still has its generated name, so a
+            // title the user set by hand is never overwritten.
+            conn.execute(
+                "UPDATE sessions SET title = ?1
+                   WHERE id = ?2
+                     AND (title LIKE 'Voice %' OR title LIKE 'Session %'
+                          OR title = 'Voice note' OR title = '')",
+                params![title, session_id],
+            )
+            .map_err(|err| err.to_string())?;
+        }
+    }
+
     Ok(transcript)
+}
+
+/// First clause of a transcript, trimmed to something that fits a sidebar.
+///
+/// Counts characters rather than bytes: Chinese is three bytes per character
+/// in UTF-8, so a byte limit would cut CJK titles to a third the length of
+/// English ones, and could slice a character in half.
+fn summarize_for_title(text: &str) -> String {
+    const MAX_CHARS: usize = 28;
+    let cleaned = text.trim();
+
+    // Prefer a natural break, in either script's punctuation.
+    let first = cleaned
+        .split(['。', '！', '？', '\n', '.', '!', '?'])
+        .map(str::trim)
+        .find(|part| !part.is_empty())
+        .unwrap_or(cleaned);
+
+    let mut chars = first.chars();
+    let head: String = chars.by_ref().take(MAX_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{}…", head.trim_end())
+    } else {
+        head
+    }
+}
+
+#[cfg(test)]
+mod title_tests {
+    use super::summarize_for_title;
+
+    #[test]
+    fn takes_the_first_sentence() {
+        assert_eq!(summarize_for_title("你好。第二句"), "你好");
+        assert_eq!(summarize_for_title("Hello there. Second"), "Hello there");
+    }
+
+    #[test]
+    fn truncates_by_characters_not_bytes() {
+        // 40 Chinese characters is 120 bytes; a byte limit would cut this to a
+        // third of the intended length, or split a character.
+        let long = "中".repeat(40);
+        let title = summarize_for_title(&long);
+        assert_eq!(title.chars().count(), 29, "28 chars plus the ellipsis");
+        assert!(title.ends_with('…'));
+    }
+
+    #[test]
+    fn empty_stays_empty() {
+        assert_eq!(summarize_for_title("   "), "");
+    }
 }
 
 fn list_transcripts_inner(

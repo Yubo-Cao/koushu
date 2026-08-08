@@ -19,7 +19,9 @@
         "height": 820,
         "minWidth": 1040,
         "minHeight": 700,
-        "center": true
+        "center": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       },
       {
         "label": "voice-bar",
