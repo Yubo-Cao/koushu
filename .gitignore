@@ -1,0 +1,9 @@
+node_modules
+.next
+out
+dist
+target
+src-tauri/target
+src-tauri/gen
+*.log
+.DS_Store

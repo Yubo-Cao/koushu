@@ -1,0 +1,5 @@
+funasr
+huggingface_hub
+torch
+torchaudio
+soundfile
