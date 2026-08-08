@@ -50,7 +50,7 @@
       "icons/icon.png"
     ],
     "externalBin": ["binaries/llama-funasr-cli", "binaries/llama-funasr-sensevoice"],
-    "resources": ["python/*", "binaries/*"],
+    "resources": ["binaries/*"],
     "category": "Productivity",
     "shortDescription": "Fun-ASR desktop voice transcription.",
     "longDescription": "A local desktop wrapper for Fun-ASR with microphone capture, saved transcripts, model setup, and a floating voice bar."

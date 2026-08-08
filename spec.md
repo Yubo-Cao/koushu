@@ -2,7 +2,7 @@ Target Platforms
 
 - First-class: Linux + macOS.
 - macOS: prioritize Apple Silicon with llama.cpp Accelerate support.
-- Linux: ship CPU binary first, with optional app-managed NVIDIA CUDA/vLLM runtime in 0.0.2.
+- Linux: CPU only. No GPU/CUDA runtime is shipped or planned (see README, "Why CPU only").
 - Windows: not in v1.
 
 Core Stack
@@ -10,10 +10,9 @@ Core Stack
 - Desktop shell: Tauri v2.
 - Frontend: Next.js static export + Tailwind CSS v4.
 - Persistence: local SQLite in app data.
-- ASR engine priority:
-    1. Fun-ASR-Nano via GGUF/llama.cpp sidecar.
-    2. Bundled Python worker fallback for functionality not available in GGUF yet.
-    3. Optional GPU vLLM backend for Fun-ASR-Nano-2512 in 0.0.2, not default, installed into app data.
+- ASR engines, both on the official Fun-ASR llama.cpp CPU runtime:
+    1. Fun-ASR-Nano via `llama-funasr-cli` — default, ~8.8x realtime, best English.
+    2. SenseVoiceSmall via `llama-funasr-sensevoice` — ~20.8x realtime, for speed.
 
 Tauri’s current Next.js guidance expects output: "export" and frontendDist: "../out", so the UI will avoid SSR/server actions. Tailwind
 v4 will use the current @import "tailwindcss" setup with CSS-first theme tokens.
@@ -21,9 +20,8 @@ v4 will use the current @import "tailwindcss" setup with CSS-first theme tokens.
 Runtime Design
 
 - Tauri launches an ASR sidecar process.
-- Main default sidecar: llama.cpp/Fun-ASR-Nano GGUF runtime.
-- Python sidecar bundled for compatibility and download/model-management helpers.
-- GPU sidecar: app-managed `uv` + Python 3.12 venv under app data. It installs FunASR, vLLM, PyTorch CUDA wheels, and CUDA shared-library wheels at runtime; the host still provides the NVIDIA driver/libcuda.
+- Sidecars are the two official prebuilt binaries; model downloads are handled natively in Rust.
+- Long audio is segmented by the runtime's built-in ggml FSMN-VAD, not an external front end.
 - Tauri records microphone audio natively and sends bounded chunks to the local runtime.
 - Runtime returns partial transcription events first, then final segments.
 - Tauri handles native pieces: window lifecycle, app data paths, global shortcuts, clipboard, and paste automation.
@@ -38,7 +36,7 @@ ChatGPT-style transcription workspace:
 - Top controls:
     - Model: default Fun-ASR-Nano.
     - Language.
-    - Runtime: GGUF CPU default, optional vLLM GPU, Python fallback.
+    - Model: Fun-ASR-Nano (accurate) or SenseVoiceSmall (fast).
     - Input device.
 
 - Sessions saved by default.
@@ -58,18 +56,14 @@ First Launch Setup
 Configuration Window
 
 - Installed models and disk usage.
-- GPU runtime panel:
-    - Detect NVIDIA driver/libcuda.
-    - Install/repair app-managed GPU Python runtime.
-    - Show Python, PyTorch CUDA, vLLM, FunASR, and CUDA device status.
+- Runtime panel: engine, compute mode, platform.
 - Available downloads:
-    - Fun-ASR-Nano GGUF default.
-    - Future: MLT Nano, SenseVoiceSmall, Paraformer.
-    - Advanced: Fun-ASR-Nano-2512 vLLM GPU.
+    - Fun-ASR-Nano GGUF (default).
+    - SenseVoiceSmall GGUF.
+    - Future: MLT Nano, Paraformer.
 
 - Download/delete/retry controls.
 - Default model/language/runtime.
-- Hotwords where supported.
 - VAD/punctuation/diarization controls only where backend supports them.
 - Transcript retention settings.
 - Audio retention off by default.
@@ -100,11 +94,10 @@ SQLite Schema
 
 Main Open Risks
 
-- Fun-ASR GGUF runtime API may not expose all Python features yet.
-- True realtime partials need validation against a persistent streaming runtime; 0.0.2 uses bounded rolling-window preview to keep the UI responsive.
+- The official CLI exposes no hotword or language flag; Nano detects language itself.
+- True realtime partials still use a bounded rolling-window preview. At 8.8x realtime a 720 ms chunk costs ~82 ms, so genuine streaming is reachable on CPU without a persistent server.
 - Auto-paste needs per-platform implementation and permissions.
 - Model artifact naming/download layout must be verified from Hugging Face before hardcoding.
-- GPU vLLM runtime is large and depends on NVIDIA driver compatibility; default install uses CUDA 13.0 wheels and exposes `FUN_ASR_DESKTOP_TORCH_BACKEND` for older stacks. Default inference uses a conservative one-request, eager-mode vLLM profile for 8 GB GPUs.
 
 Next Build Order
 

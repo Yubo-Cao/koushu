@@ -2,7 +2,6 @@ use arboard::Clipboard;
 use base64::{engine::general_purpose, Engine as _};
 use chrono::Local;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use flate2::read::GzDecoder;
 use reqwest::header::{CONTENT_LENGTH, RANGE};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -19,12 +18,8 @@ use std::{
     thread,
     time::Duration,
 };
-use tar::Archive;
 use tauri::{ipc::Channel, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use uuid::Uuid;
-
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 
 // Official QwenAudio/Fun-ASR llama.cpp runtime binaries (release runtime-llamacpp-v0.1.9).
 // `llama-funasr-cli` drives Fun-ASR-Nano (SAN-M encoder + Qwen3-0.6B decoder);
@@ -93,7 +88,6 @@ fn gguf_assets_for(backend: &str) -> Option<&'static [GgufAsset]> {
 struct AppState {
     db: Mutex<Connection>,
     app_dir: PathBuf,
-    python_script: PathBuf,
     funasr_cli_bin: PathBuf,
     funasr_sensevoice_bin: PathBuf,
     downloads: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -125,7 +119,6 @@ struct PlatformInfo {
     wayland_display: bool,
     x11_display: bool,
     paste_tools: Vec<String>,
-    python: String,
     bundled_asr: bool,
 }
 
@@ -232,7 +225,6 @@ struct TranscribeAudioRequest {
     audio_base64: String,
     model_id: String,
     language: String,
-    hotwords: Option<Vec<String>>,
 }
 
 struct AsrJob {
@@ -241,11 +233,8 @@ struct AsrJob {
     model: ModelInfo,
     audio_path: PathBuf,
     language: String,
-    hotwords: Option<Vec<String>>,
     save_final: bool,
     retain_audio: bool,
-    python_script: PathBuf,
-    gpu_python: PathBuf,
     funasr_cli_bin: PathBuf,
     funasr_sensevoice_bin: PathBuf,
 }
@@ -275,68 +264,6 @@ struct PasteResult {
     method: Option<String>,
     message: String,
     session_type: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct PythonProbe {
-    ok: bool,
-    python: String,
-    message: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GpuRuntimeInfo {
-    ok: bool,
-    installed: bool,
-    driver_ok: bool,
-    driver: String,
-    runtime_dir: String,
-    uv: Option<String>,
-    python: Option<String>,
-    python_version: Option<String>,
-    torch: Option<String>,
-    torch_cuda: Option<String>,
-    cuda_available: bool,
-    device: Option<String>,
-    vllm: Option<String>,
-    funasr: Option<String>,
-    message: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct PythonGpuInfo {
-    ok: bool,
-    missing: Option<Vec<String>>,
-    torch: Option<String>,
-    torch_cuda: Option<String>,
-    cuda_available: bool,
-    device_count: Option<i64>,
-    device: Option<String>,
-    vllm: Option<String>,
-    funasr: Option<String>,
-    error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    tag = "event",
-    content = "data"
-)]
-enum GpuRuntimeInstallEvent {
-    Started { message: String },
-    Progress { message: String },
-    Finished { runtime: GpuRuntimeInfo },
-    Error { error: String },
-}
-
-#[derive(Debug, Deserialize)]
-struct PythonAsrResponse {
-    ok: bool,
-    text: Option<String>,
-    error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -590,62 +517,6 @@ fn set_setting(
     set_setting_inner(&state, &key, &value)
 }
 
-#[tauri::command]
-fn probe_python(state: tauri::State<'_, AppState>) -> PythonProbe {
-    let python = python_bin();
-    match Command::new(&python)
-        .arg(&state.python_script)
-        .arg("probe")
-        .output()
-    {
-        Ok(output) if output.status.success() => PythonProbe {
-            ok: true,
-            python,
-            message: String::from_utf8_lossy(&output.stdout).trim().to_string(),
-        },
-        Ok(output) => PythonProbe {
-            ok: false,
-            python,
-            message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        },
-        Err(err) => PythonProbe {
-            ok: false,
-            python,
-            message: err.to_string(),
-        },
-    }
-}
-
-#[tauri::command]
-async fn probe_gpu_runtime(state: tauri::State<'_, AppState>) -> Result<GpuRuntimeInfo, String> {
-    let app_dir = state.app_dir.clone();
-    let python_script = state.python_script.clone();
-    tauri::async_runtime::spawn_blocking(move || inspect_gpu_runtime(&app_dir, &python_script))
-        .await
-        .map_err(|err| format!("GPU runtime probe failed to join: {err}"))?
-}
-
-#[tauri::command]
-async fn install_gpu_runtime_with_progress(
-    state: tauri::State<'_, AppState>,
-    on_event: Channel<GpuRuntimeInstallEvent>,
-) -> Result<GpuRuntimeInfo, String> {
-    let app_dir = state.app_dir.clone();
-    let python_script = state.python_script.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = install_gpu_runtime_inner(&app_dir, &python_script, &on_event);
-        if let Err(err) = &result {
-            send_gpu_install_event(
-                &on_event,
-                GpuRuntimeInstallEvent::Error { error: err.clone() },
-            );
-        }
-        result
-    })
-    .await
-    .map_err(|err| format!("GPU runtime install failed to join: {err}"))?
-}
-
 fn send_download_event(channel: &Channel<ModelDownloadEvent>, event: ModelDownloadEvent) {
     let _ = channel.send(event);
 }
@@ -830,51 +701,6 @@ fn download_gguf_model(
     Ok(DownloadResult::Installed(done_bytes))
 }
 
-fn download_python_model(
-    state: &AppState,
-    model: &ModelInfo,
-    on_event: &Channel<ModelDownloadEvent>,
-) -> Result<DownloadResult, String> {
-    let python = if model.backend == "funasr-vllm-gpu" {
-        let python = gpu_python_bin(&state.app_dir);
-        if !python.exists() {
-            return Err(
-                "Install the GPU runtime in Settings before downloading the vLLM model."
-                    .to_string(),
-            );
-        }
-        python
-    } else {
-        PathBuf::from(python_bin())
-    };
-    send_download_event(
-        on_event,
-        ModelDownloadEvent::Started {
-            model_id: model.id.clone(),
-            downloaded_bytes: 0,
-            total_bytes: None,
-        },
-    );
-    let output = Command::new(python)
-        .arg(&state.python_script)
-        .arg("ensure-model")
-        .arg("--repo")
-        .arg(&model.repo_id)
-        .arg("--local-dir")
-        .arg(&model.local_path)
-        .env("PYTHONUNBUFFERED", "1")
-        .output()
-        .map_err(|err| err.to_string())?;
-
-    if output.status.success() {
-        dir_size(Path::new(&model.local_path))
-            .map(DownloadResult::Installed)
-            .map_err(|err| err.to_string())
-    } else {
-        Err(compact_process_error(&output.stdout, &output.stderr))
-    }
-}
-
 #[tauri::command]
 fn pause_model_download(state: tauri::State<'_, AppState>, model_id: String) -> Result<(), String> {
     let downloads = state
@@ -911,7 +737,7 @@ fn download_model_with_progress(
     let result = if gguf_assets_for(&model.backend).is_some() {
         download_gguf_model(&model, &cancel, &on_event)
     } else {
-        download_python_model(&state, &model, &on_event)
+        Err(format!("Unknown model backend: {}", model.backend))
     };
 
     let response = match result {
@@ -1066,104 +892,6 @@ fn transcribe_with_sensevoice(
     }
 }
 
-fn transcribe_with_python(
-    python_script: &Path,
-    model: &ModelInfo,
-    audio_path: &Path,
-    language: &str,
-    hotwords: Option<&[String]>,
-) -> Result<(String, String), String> {
-    let python = PathBuf::from(python_bin());
-    let mut command = low_priority_command(&python);
-    let output = command
-        .arg(python_script)
-        .arg("transcribe")
-        .arg("--audio")
-        .arg(audio_path)
-        .arg("--repo")
-        .arg(&model.repo_id)
-        .arg("--local-dir")
-        .arg(&model.local_path)
-        .arg("--language")
-        .arg(language)
-        .args(hotword_args(hotwords))
-        .env("PYTHONUNBUFFERED", "1")
-        .output()
-        .map_err(|err| err.to_string())?;
-
-    if !output.status.success() {
-        return Err(compact_process_error(&output.stdout, &output.stderr));
-    }
-
-    let raw = String::from_utf8_lossy(&output.stdout);
-    let parsed = parse_python_asr_response(&raw, "Python ASR")?;
-    if parsed.ok {
-        Ok((parsed.text.unwrap_or_default(), "python-hf-cpu".to_string()))
-    } else {
-        Err(parsed
-            .error
-            .unwrap_or_else(|| "Python ASR failed".to_string()))
-    }
-}
-
-fn transcribe_with_vllm(
-    python: &Path,
-    python_script: &Path,
-    model: &ModelInfo,
-    audio_path: &Path,
-    language: &str,
-    hotwords: Option<&[String]>,
-) -> Result<(String, String), String> {
-    if !python.exists() {
-        return Err("GPU runtime is not installed. Open Settings and install the GPU runtime before using the vLLM backend.".to_string());
-    }
-    let mut command = low_priority_command(python);
-    command
-        .arg(python_script)
-        .arg("transcribe-vllm")
-        .arg("--audio")
-        .arg(audio_path)
-        .arg("--repo")
-        .arg(&model.repo_id)
-        .arg("--local-dir")
-        .arg(&model.local_path)
-        .arg("--language")
-        .arg(language)
-        .args(hotword_args(hotwords))
-        .arg("--gpu-memory-utilization")
-        .arg(vllm_gpu_memory_utilization())
-        .arg("--max-model-len")
-        .arg(vllm_max_model_len())
-        .arg("--max-num-seqs")
-        .arg(vllm_max_num_seqs());
-    if vllm_enforce_eager() {
-        command.arg("--enforce-eager");
-    }
-    let output = command
-        .env("PYTHONUNBUFFERED", "1")
-        .env("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-        .output()
-        .map_err(|err| err.to_string())?;
-
-    if !output.status.success() {
-        return Err(compact_process_error(&output.stdout, &output.stderr));
-    }
-
-    let raw = String::from_utf8_lossy(&output.stdout);
-    let parsed = parse_python_asr_response(&raw, "vLLM ASR")?;
-    if parsed.ok {
-        Ok((
-            parsed.text.unwrap_or_default(),
-            "funasr-vllm-gpu".to_string(),
-        ))
-    } else {
-        Err(parsed.error.unwrap_or_else(|| {
-            "Fun-ASR vLLM failed. Open Settings and run Install GPU Runtime, then retry."
-                .to_string()
-        }))
-    }
-}
-
 #[tauri::command]
 async fn transcribe_audio(
     state: tauri::State<'_, AppState>,
@@ -1221,11 +949,8 @@ fn prepare_asr_job(
         model,
         audio_path,
         language: request.language,
-        hotwords: request.hotwords,
         save_final,
         retain_audio: setting_bool(state, "audio.retain").unwrap_or(false),
-        python_script: state.python_script.clone(),
-        gpu_python: gpu_python_bin(&state.app_dir),
         funasr_cli_bin: state.funasr_cli_bin.clone(),
         funasr_sensevoice_bin: state.funasr_sensevoice_bin.clone(),
     })
@@ -1239,21 +964,9 @@ fn run_asr_job(job: AsrJob) -> AsrJobOutput {
         BACKEND_SENSEVOICE => {
             transcribe_with_sensevoice(&job.funasr_sensevoice_bin, &job.model, &job.audio_path)
         }
-        "funasr-vllm-gpu" => transcribe_with_vllm(
-            &job.gpu_python,
-            &job.python_script,
-            &job.model,
-            &job.audio_path,
-            &job.language,
-            job.hotwords.as_deref(),
-        ),
-        _ => transcribe_with_python(
-            &job.python_script,
-            &job.model,
-            &job.audio_path,
-            &job.language,
-            job.hotwords.as_deref(),
-        ),
+        other => Err(format!(
+            "Unknown ASR backend '{other}'. Pick Fun-ASR-Nano or SenseVoiceSmall in settings."
+        )),
     };
 
     if !job.retain_audio {
@@ -1416,15 +1129,6 @@ pub fn run() {
             fs::create_dir_all(app_dir.join("audio")).map_err(|err| err.to_string())?;
 
             let db = init_db(&app_dir).map_err(|err| err.to_string())?;
-            let python_script = app
-                .path()
-                .resource_dir()
-                .ok()
-                .map(|dir| dir.join("python").join("funasr_worker.py"))
-                .filter(|path| path.exists())
-                .unwrap_or_else(|| {
-                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/funasr_worker.py")
-                });
             let resolve_bundled_bin = |name: &str| {
                 app.path()
                     .resource_dir()
@@ -1443,7 +1147,6 @@ pub fn run() {
             app.manage(AppState {
                 db: Mutex::new(db),
                 app_dir,
-                python_script,
                 funasr_cli_bin,
                 funasr_sensevoice_bin,
                 downloads: Mutex::new(HashMap::new()),
@@ -1465,9 +1168,6 @@ pub fn run() {
             list_transcripts,
             create_session,
             set_setting,
-            probe_python,
-            probe_gpu_runtime,
-            install_gpu_runtime_with_progress,
             download_model_with_progress,
             pause_model_download,
             preview_audio,
@@ -2229,433 +1929,6 @@ fn decode_audio_payload(payload: &str) -> Result<Vec<u8>, String> {
         .map_err(|err| format!("Invalid base64 audio payload: {err}"))
 }
 
-fn hotword_args(hotwords: Option<&[String]>) -> Vec<String> {
-    match hotwords {
-        Some(words) if !words.is_empty() => vec![
-            "--hotwords".to_string(),
-            words
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .join("\n"),
-        ],
-        _ => Vec::new(),
-    }
-}
-
-fn parse_python_asr_response(raw: &str, label: &str) -> Result<PythonAsrResponse, String> {
-    for line in raw.lines().rev() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('{') && trimmed.ends_with('}') {
-            return serde_json::from_str(trimmed)
-                .map_err(|err| format!("{label} returned invalid JSON: {err}: {trimmed}"));
-        }
-    }
-    serde_json::from_str(raw.trim())
-        .map_err(|err| format!("{label} returned invalid JSON: {err}: {raw}"))
-}
-
-fn vllm_gpu_memory_utilization() -> String {
-    env::var("FUN_ASR_DESKTOP_VLLM_GPU_MEMORY").unwrap_or_else(|_| "0.50".to_string())
-}
-
-fn vllm_max_model_len() -> String {
-    env::var("FUN_ASR_DESKTOP_VLLM_MAX_MODEL_LEN").unwrap_or_else(|_| "2048".to_string())
-}
-
-fn vllm_max_num_seqs() -> String {
-    env::var("FUN_ASR_DESKTOP_VLLM_MAX_NUM_SEQS").unwrap_or_else(|_| "1".to_string())
-}
-
-fn vllm_enforce_eager() -> bool {
-    env::var("FUN_ASR_DESKTOP_VLLM_ENFORCE_EAGER")
-        .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
-        .unwrap_or(true)
-}
-
-fn python_bin() -> String {
-    env::var("FUN_ASR_DESKTOP_PYTHON").unwrap_or_else(|_| "python3".to_string())
-}
-
-fn gpu_runtime_dir(app_dir: &Path) -> PathBuf {
-    app_dir.join("runtimes").join("vllm-gpu")
-}
-
-fn gpu_venv_dir(app_dir: &Path) -> PathBuf {
-    gpu_runtime_dir(app_dir).join("venv")
-}
-
-fn gpu_python_bin(app_dir: &Path) -> PathBuf {
-    gpu_venv_dir(app_dir).join("bin").join("python")
-}
-
-fn gpu_uv_bin(app_dir: &Path) -> PathBuf {
-    app_dir.join("runtimes").join("uv").join("bin").join("uv")
-}
-
-fn gpu_uv_cache_dir(app_dir: &Path) -> PathBuf {
-    app_dir.join("runtimes").join("uv-cache")
-}
-
-fn torch_backend() -> String {
-    env::var("FUN_ASR_DESKTOP_TORCH_BACKEND").unwrap_or_else(|_| "cu130".to_string())
-}
-
-fn requirements_vllm_path(python_script: &Path) -> PathBuf {
-    python_script
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("requirements-vllm.txt")
-}
-
-fn send_gpu_install_event(
-    channel: &Channel<GpuRuntimeInstallEvent>,
-    event: GpuRuntimeInstallEvent,
-) {
-    let _ = channel.send(event);
-}
-
-fn inspect_gpu_runtime(app_dir: &Path, python_script: &Path) -> Result<GpuRuntimeInfo, String> {
-    let runtime_dir = gpu_runtime_dir(app_dir);
-    let uv_path = gpu_uv_bin(app_dir);
-    let python_path = gpu_python_bin(app_dir);
-    let driver = gpu_driver_status();
-    let python = python_path
-        .exists()
-        .then(|| python_path.to_string_lossy().to_string());
-    let uv = if uv_path.exists() {
-        Some(uv_path.to_string_lossy().to_string())
-    } else {
-        command_path("uv").map(|path| path.to_string_lossy().to_string())
-    };
-
-    if !python_path.exists() {
-        return Ok(GpuRuntimeInfo {
-            ok: false,
-            installed: false,
-            driver_ok: driver.0,
-            driver: driver.1,
-            runtime_dir: runtime_dir.to_string_lossy().to_string(),
-            uv,
-            python,
-            python_version: None,
-            torch: None,
-            torch_cuda: None,
-            cuda_available: false,
-            device: None,
-            vllm: None,
-            funasr: None,
-            message: if driver.0 {
-                "GPU runtime is not installed. Install it to download Python, PyTorch CUDA wheels, and vLLM into app data.".to_string()
-            } else {
-                "NVIDIA driver/libcuda was not detected. Install the NVIDIA driver before using the GPU backend.".to_string()
-            },
-        });
-    }
-
-    let python_version = Command::new(&python_path)
-        .arg("--version")
-        .output()
-        .ok()
-        .and_then(|output| {
-            let text = if output.stdout.is_empty() {
-                String::from_utf8_lossy(&output.stderr).trim().to_string()
-            } else {
-                String::from_utf8_lossy(&output.stdout).trim().to_string()
-            };
-            if text.is_empty() {
-                None
-            } else {
-                Some(text)
-            }
-        });
-
-    let output = Command::new(&python_path)
-        .arg(python_script)
-        .arg("gpu-info")
-        .env("PYTHONUNBUFFERED", "1")
-        .output()
-        .map_err(|err| format!("Failed to run GPU runtime probe: {err}"))?;
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let parsed: PythonGpuInfo = serde_json::from_str(&raw).map_err(|err| {
-        format!(
-            "GPU runtime probe returned invalid JSON: {err}: {}",
-            compact_process_error(&output.stdout, &output.stderr)
-        )
-    })?;
-    let missing = parsed
-        .missing
-        .as_ref()
-        .map(|items| items.join(", "))
-        .filter(|items| !items.is_empty());
-    let message = if parsed.ok && driver.0 {
-        format!(
-            "GPU runtime is ready{}.",
-            parsed
-                .device
-                .as_ref()
-                .map(|device| format!(" on {device}"))
-                .unwrap_or_default()
-        )
-    } else if !driver.0 {
-        "NVIDIA driver/libcuda was not detected. PyTorch CUDA wheels are installed, but cannot run without the host driver.".to_string()
-    } else if let Some(error) = parsed.error.clone() {
-        error
-    } else if let Some(missing) = missing {
-        format!("GPU runtime is missing packages: {missing}")
-    } else {
-        "GPU runtime is installed, but CUDA is not available to PyTorch.".to_string()
-    };
-
-    Ok(GpuRuntimeInfo {
-        ok: parsed.ok && driver.0,
-        installed: true,
-        driver_ok: driver.0,
-        driver: driver.1,
-        runtime_dir: runtime_dir.to_string_lossy().to_string(),
-        uv,
-        python,
-        python_version,
-        torch: parsed.torch,
-        torch_cuda: parsed.torch_cuda,
-        cuda_available: parsed.cuda_available,
-        device: parsed.device.or_else(|| {
-            parsed
-                .device_count
-                .filter(|count| *count > 0)
-                .map(|count| format!("{count} CUDA device(s)"))
-        }),
-        vllm: parsed.vllm,
-        funasr: parsed.funasr,
-        message,
-    })
-}
-
-fn install_gpu_runtime_inner(
-    app_dir: &Path,
-    python_script: &Path,
-    channel: &Channel<GpuRuntimeInstallEvent>,
-) -> Result<GpuRuntimeInfo, String> {
-    send_gpu_install_event(
-        channel,
-        GpuRuntimeInstallEvent::Started {
-            message: "Preparing app-managed GPU runtime.".to_string(),
-        },
-    );
-    fs::create_dir_all(gpu_runtime_dir(app_dir)).map_err(|err| err.to_string())?;
-    fs::create_dir_all(gpu_uv_cache_dir(app_dir)).map_err(|err| err.to_string())?;
-
-    let uv = ensure_uv(app_dir, channel)?;
-    let venv = gpu_venv_dir(app_dir);
-    let python = gpu_python_bin(app_dir);
-    let requirements = requirements_vllm_path(python_script);
-    if !requirements.exists() {
-        return Err(format!(
-            "Bundled GPU requirements file is missing: {}",
-            requirements.display()
-        ));
-    }
-
-    send_gpu_install_event(
-        channel,
-        GpuRuntimeInstallEvent::Progress {
-            message: "Creating managed Python 3.12 environment.".to_string(),
-        },
-    );
-    let mut venv_cmd = Command::new(&uv);
-    venv_cmd
-        .arg("venv")
-        .arg(&venv)
-        .arg("--python")
-        .arg("3.12")
-        .arg("--managed-python")
-        .arg("--allow-existing")
-        .arg("--seed");
-    run_runtime_step(
-        app_dir,
-        venv_cmd,
-        "Failed to create the GPU Python environment",
-    )?;
-
-    send_gpu_install_event(
-        channel,
-        GpuRuntimeInstallEvent::Progress {
-            message: format!(
-                "Installing FunASR, PyTorch CUDA wheels ({}) and vLLM. This can download several GB.",
-                torch_backend()
-            ),
-        },
-    );
-    let mut install_cmd = Command::new(&uv);
-    install_cmd
-        .arg("pip")
-        .arg("install")
-        .arg("--python")
-        .arg(&python)
-        .arg("--torch-backend")
-        .arg(torch_backend())
-        .arg("--upgrade")
-        .arg("--reinstall-package")
-        .arg("torch")
-        .arg("--reinstall-package")
-        .arg("torchaudio")
-        .arg("--reinstall-package")
-        .arg("torchvision")
-        .arg("-r")
-        .arg(&requirements);
-    run_runtime_step(
-        app_dir,
-        install_cmd,
-        "Failed to install the GPU Python packages",
-    )?;
-
-    send_gpu_install_event(
-        channel,
-        GpuRuntimeInstallEvent::Progress {
-            message: "Checking CUDA visibility from the managed runtime.".to_string(),
-        },
-    );
-    let info = inspect_gpu_runtime(app_dir, python_script)?;
-    send_gpu_install_event(
-        channel,
-        GpuRuntimeInstallEvent::Finished {
-            runtime: info.clone(),
-        },
-    );
-    Ok(info)
-}
-
-fn ensure_uv(app_dir: &Path, channel: &Channel<GpuRuntimeInstallEvent>) -> Result<PathBuf, String> {
-    if let Some(path) = env::var_os("FUN_ASR_DESKTOP_UV").map(PathBuf::from) {
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-    if let Some(path) = command_path("uv") {
-        return Ok(path);
-    }
-
-    let uv_path = gpu_uv_bin(app_dir);
-    if uv_path.exists() {
-        return Ok(uv_path);
-    }
-
-    let asset = uv_release_asset()?;
-    let url = format!("https://github.com/astral-sh/uv/releases/latest/download/{asset}.tar.gz");
-    send_gpu_install_event(
-        channel,
-        GpuRuntimeInstallEvent::Progress {
-            message: "Downloading uv bootstrap binary into app data.".to_string(),
-        },
-    );
-    let bytes = reqwest::blocking::get(&url)
-        .and_then(|response| response.error_for_status())
-        .map_err(|err| format!("Failed to download uv from {url}: {err}"))?
-        .bytes()
-        .map_err(|err| format!("Failed to read uv download: {err}"))?;
-
-    let bin_dir = uv_path
-        .parent()
-        .ok_or_else(|| "Invalid uv runtime path".to_string())?;
-    fs::create_dir_all(bin_dir).map_err(|err| err.to_string())?;
-    let tmp_path = uv_path.with_extension("download");
-    let decoder = GzDecoder::new(bytes.as_ref());
-    let mut archive = Archive::new(decoder);
-    let mut found = false;
-    for entry in archive.entries().map_err(|err| err.to_string())? {
-        let mut entry = entry.map_err(|err| err.to_string())?;
-        let path = entry.path().map_err(|err| err.to_string())?;
-        if path.file_name().and_then(|name| name.to_str()) == Some("uv") {
-            let mut file = fs::File::create(&tmp_path).map_err(|err| err.to_string())?;
-            std::io::copy(&mut entry, &mut file).map_err(|err| err.to_string())?;
-            found = true;
-            break;
-        }
-    }
-    if !found {
-        let _ = fs::remove_file(&tmp_path);
-        return Err("Downloaded uv archive did not contain a uv binary.".to_string());
-    }
-    #[cfg(unix)]
-    {
-        let mut permissions = fs::metadata(&tmp_path)
-            .map_err(|err| err.to_string())?
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&tmp_path, permissions).map_err(|err| err.to_string())?;
-    }
-    fs::rename(&tmp_path, &uv_path).map_err(|err| err.to_string())?;
-    Ok(uv_path)
-}
-
-fn uv_release_asset() -> Result<&'static str, String> {
-    match (env::consts::OS, env::consts::ARCH) {
-        ("linux", "x86_64") => Ok("uv-x86_64-unknown-linux-gnu"),
-        ("linux", "aarch64") => Ok("uv-aarch64-unknown-linux-gnu"),
-        _ => Err("GPU runtime bootstrap currently supports Linux x86_64 and aarch64.".to_string()),
-    }
-}
-
-fn run_runtime_step(app_dir: &Path, mut command: Command, context: &str) -> Result<(), String> {
-    command
-        .env("UV_CACHE_DIR", gpu_uv_cache_dir(app_dir))
-        .env("UV_LINK_MODE", "copy")
-        .env("UV_NO_PROGRESS", "0");
-    let output = command
-        .output()
-        .map_err(|err| format!("{context}: {err}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{context}: {}",
-            compact_process_error(&output.stdout, &output.stderr)
-        ))
-    }
-}
-
-fn gpu_driver_status() -> (bool, String) {
-    if let Ok(output) = Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=name,driver_version,memory.total",
-            "--format=csv,noheader",
-        ])
-        .output()
-    {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !text.is_empty() {
-                return (
-                    true,
-                    text.lines()
-                        .next()
-                        .unwrap_or("NVIDIA GPU detected")
-                        .to_string(),
-                );
-            }
-        }
-    }
-
-    if let Ok(output) = Command::new("ldconfig").arg("-p").output() {
-        let text = String::from_utf8_lossy(&output.stdout);
-        if text.contains("libcuda.so") {
-            return (true, "libcuda.so detected".to_string());
-        }
-    }
-
-    for candidate in [
-        "/usr/lib/libcuda.so.1",
-        "/usr/lib64/libcuda.so.1",
-        "/usr/lib/x86_64-linux-gnu/libcuda.so.1",
-    ] {
-        if Path::new(candidate).exists() {
-            return (true, format!("{candidate} detected"));
-        }
-    }
-
-    (false, "No NVIDIA driver/libcuda detected".to_string())
-}
-
 fn command_path(name: &str) -> Option<PathBuf> {
     let direct = Path::new(name);
     if direct.components().count() > 1 && direct.is_file() {
@@ -2683,7 +1956,6 @@ fn platform_info(state: &AppState) -> PlatformInfo {
         wayland_display: env::var("WAYLAND_DISPLAY").is_ok(),
         x11_display: env::var("DISPLAY").is_ok(),
         paste_tools: tools,
-        python: python_bin(),
         bundled_asr: state.funasr_cli_bin.exists() && state.funasr_sensevoice_bin.exists(),
     }
 }
@@ -2866,18 +2138,3 @@ fn compact_process_error(stdout: &[u8], stderr: &[u8]) -> String {
     }
 }
 
-fn dir_size(path: &Path) -> Result<u64, std::io::Error> {
-    let mut size = 0;
-    if path.is_dir() {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            let meta = entry.metadata()?;
-            if meta.is_dir() {
-                size += dir_size(&entry.path())?;
-            } else {
-                size += meta.len();
-            }
-        }
-    }
-    Ok(size)
-}

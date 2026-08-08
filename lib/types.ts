@@ -5,7 +5,6 @@ export type PlatformInfo = {
   wayland_display: boolean;
   x11_display: boolean;
   paste_tools: string[];
-  python: string;
   bundled_asr: boolean;
 };
 
@@ -52,42 +51,6 @@ export type Bootstrap = {
   models: ModelInfo[];
   sessions: SessionInfo[];
 };
-
-export type GpuRuntimeInfo = {
-  ok: boolean;
-  installed: boolean;
-  driverOk: boolean;
-  driver: string;
-  runtimeDir: string;
-  uv?: string | null;
-  python?: string | null;
-  pythonVersion?: string | null;
-  torch?: string | null;
-  torchCuda?: string | null;
-  cudaAvailable: boolean;
-  device?: string | null;
-  vllm?: string | null;
-  funasr?: string | null;
-  message: string;
-};
-
-export type GpuRuntimeInstallEvent =
-  | {
-      event: "started";
-      data: { message: string };
-    }
-  | {
-      event: "progress";
-      data: { message: string };
-    }
-  | {
-      event: "finished";
-      data: { runtime: GpuRuntimeInfo };
-    }
-  | {
-      event: "error";
-      data: { error: string };
-    };
 
 export type AsrResult = {
   session_id: string;

@@ -5,8 +5,6 @@ import type {
   AudioLevelInfo,
   AsrResult,
   Bootstrap,
-  GpuRuntimeInfo,
-  GpuRuntimeInstallEvent,
   ModelInfo,
   ModelDownloadEvent,
   NativeAudioCaptureResult,
@@ -59,23 +57,6 @@ export async function setSetting(key: string, value: string): Promise<void> {
   await invokeCommand("set_setting", { key, value });
 }
 
-export async function probePython(): Promise<{ ok: boolean; python: string; message: string }> {
-  return invokeCommand("probe_python");
-}
-
-export async function probeGpuRuntime(): Promise<GpuRuntimeInfo> {
-  return invokeCommand<GpuRuntimeInfo>("probe_gpu_runtime");
-}
-
-export async function installGpuRuntimeWithProgress(
-  onEvent: (event: GpuRuntimeInstallEvent) => void,
-): Promise<GpuRuntimeInfo> {
-  const mod = await import("@tauri-apps/api/core");
-  const channel = new mod.Channel<GpuRuntimeInstallEvent>();
-  channel.onmessage = onEvent;
-  return mod.invoke<GpuRuntimeInfo>("install_gpu_runtime_with_progress", { onEvent: channel });
-}
-
 export async function downloadModelWithProgress(
   modelId: string,
   onEvent: (event: ModelDownloadEvent) => void,
@@ -119,7 +100,6 @@ export async function transcribeAudio(input: {
   audioBase64: string;
   modelId: string;
   language: string;
-  hotwords?: string[];
 }): Promise<AsrResult> {
   return invokeCommand<AsrResult>("transcribe_audio", {
     request: {
@@ -127,7 +107,6 @@ export async function transcribeAudio(input: {
       audio_base64: input.audioBase64,
       model_id: input.modelId,
       language: input.language,
-      hotwords: input.hotwords,
     },
   });
 }
@@ -137,7 +116,6 @@ export async function previewAudio(input: {
   audioBase64: string;
   modelId: string;
   language: string;
-  hotwords?: string[];
 }): Promise<AsrResult> {
   return invokeCommand<AsrResult>("preview_audio", {
     request: {
@@ -145,7 +123,6 @@ export async function previewAudio(input: {
       audio_base64: input.audioBase64,
       model_id: input.modelId,
       language: input.language,
-      hotwords: input.hotwords,
     },
   });
 }

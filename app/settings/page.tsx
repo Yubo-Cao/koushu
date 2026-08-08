@@ -9,16 +9,12 @@ import { formatBytes } from "@/lib/format";
 import {
   downloadModelWithProgress,
   getBootstrap,
-  installGpuRuntimeWithProgress,
   pauseModelDownload,
-  probeGpuRuntime,
   resetOnboarding,
   setSetting,
 } from "@/lib/tauri";
 import type {
   Bootstrap,
-  GpuRuntimeInfo,
-  GpuRuntimeInstallEvent,
   ModelDownloadEvent,
   ModelDownloadState,
   ModelInfo,
@@ -34,9 +30,6 @@ export default function SettingsPage() {
   const [retainAudio, setRetainAudio] = useState(false);
   const [autoPaste, setAutoPaste] = useState(true);
   const [download, setDownload] = useState<ModelDownloadState | null>(null);
-  const [gpuRuntime, setGpuRuntime] = useState<GpuRuntimeInfo | null>(null);
-  const [gpuInstalling, setGpuInstalling] = useState(false);
-  const [gpuLog, setGpuLog] = useState<string[]>([]);
 
   useEffect(() => {
     refresh();
@@ -50,18 +43,8 @@ export default function SettingsPage() {
         setDefaultLanguage(String(data.settings["defaults.language"] || "中文"));
         setRetainAudio(data.settings["audio.retain"] === "true");
         setAutoPaste(data.settings["floating.autoPaste"] !== "false");
-        void refreshGpuRuntime();
       })
       .catch((error) => setMessage(String(error)));
-  }
-
-  async function refreshGpuRuntime() {
-    try {
-      setGpuRuntime(await probeGpuRuntime());
-    } catch (error) {
-      setGpuRuntime(null);
-      setMessage(String(error));
-    }
   }
 
   function handleDownloadEvent(event: ModelDownloadEvent) {
@@ -134,33 +117,6 @@ export default function SettingsPage() {
     await pauseModelDownload(modelId);
   }
 
-  function handleGpuRuntimeEvent(event: GpuRuntimeInstallEvent) {
-    if (event.event === "finished") {
-      setGpuRuntime(event.data.runtime);
-      setGpuLog((current) => [...current.slice(-5), event.data.runtime.message]);
-      return;
-    }
-    const message = event.event === "error" ? event.data.error : event.data.message;
-    setGpuLog((current) => [...current.slice(-5), message]);
-  }
-
-  async function installGpuRuntime() {
-    setGpuInstalling(true);
-    setGpuLog(["Preparing GPU runtime installer."]);
-    setMessage("Installing app-managed GPU runtime.");
-    try {
-      const runtime = await installGpuRuntimeWithProgress(handleGpuRuntimeEvent);
-      setGpuRuntime(runtime);
-      setMessage(runtime.message);
-    } catch (error) {
-      const text = String(error);
-      setGpuLog((current) => [...current.slice(-5), text]);
-      setMessage(text);
-    } finally {
-      setGpuInstalling(false);
-    }
-  }
-
   async function saveSettings() {
     setBusy("settings");
     try {
@@ -212,11 +168,6 @@ export default function SettingsPage() {
                     </div>
                     <p className="mt-1 text-sm text-smoke">{model.repo_id}</p>
                     <p className="mt-1 truncate text-xs text-smoke">{model.local_path}</p>
-                    {model.backend === "funasr-vllm-gpu" && !gpuRuntime?.ok ? (
-                      <p className="mt-2 text-sm text-[#a43b2e]">
-                        Install the GPU runtime first. The AppImage will keep Python, CUDA wheels, PyTorch, and vLLM in app data.
-                      </p>
-                    ) : null}
                     {model.last_error ? <p className="mt-2 text-sm text-[#a43b2e]">{model.last_error}</p> : null}
                     {download?.modelId === model.id ? (
                       <div className="mt-3 max-w-xl">
@@ -283,35 +234,21 @@ export default function SettingsPage() {
         </section>
 
         <aside className="space-y-4">
-          <Panel title="GPU Runtime">
+          <Panel title="Runtime">
             <div className="mb-4 flex items-center gap-2 text-sm">
-              <Cpu size={16} className={gpuRuntime?.ok ? "text-moss" : "text-rust"} />
-              <span className="font-medium">{gpuRuntime?.ok ? "Ready" : gpuRuntime?.installed ? "Needs attention" : "Not installed"}</span>
+              <Cpu size={16} className={bootstrap.platform.bundled_asr ? "text-moss" : "text-rust"} />
+              <span className="font-medium">
+                {bootstrap.platform.bundled_asr ? "Bundled runtime ready" : "Runtime missing"}
+              </span>
             </div>
             <div className="space-y-3">
-              <Info label="Driver" value={gpuRuntime?.driver || "unchecked"} />
-              <Info label="Python" value={gpuRuntime?.pythonVersion || "managed Python 3.12"} />
-              <Info label="CUDA" value={gpuRuntime?.torchCuda ? `torch CUDA ${gpuRuntime.torchCuda}` : gpuRuntime?.driverOk ? "driver detected" : "not detected"} />
-              <Info label="Device" value={gpuRuntime?.device || "none"} />
-              <Info label="vLLM" value={gpuRuntime?.vllm || "not installed"} />
-              <Info label="FunASR" value={gpuRuntime?.funasr || "not installed"} />
+              <Info label="Engine" value="llama.cpp (official Fun-ASR)" />
+              <Info label="Compute" value="CPU only" />
+              <Info label="Platform" value={`${bootstrap.platform.os} ${bootstrap.platform.arch}`} />
             </div>
-            {gpuRuntime?.message ? <p className="mt-3 text-sm leading-5 text-smoke">{gpuRuntime.message}</p> : null}
-            {gpuLog.length ? (
-              <div className="mt-3 rounded-md border border-line bg-panel p-3 text-xs leading-5 text-smoke">
-                {gpuLog.map((line, index) => (
-                  <p key={`${line}-${index}`}>{line}</p>
-                ))}
-              </div>
-            ) : null}
-            <div className="mt-4 grid grid-cols-1 gap-2">
-              <Button className="w-full" icon={<RefreshCw size={16} />} disabled={gpuInstalling} onClick={refreshGpuRuntime}>
-                Check GPU Runtime
-              </Button>
-              <Button className="w-full" variant="primary" icon={<Download size={16} />} disabled={gpuInstalling} onClick={installGpuRuntime}>
-                {gpuInstalling ? "Installing" : gpuRuntime?.installed ? "Repair GPU Runtime" : "Install GPU Runtime"}
-              </Button>
-            </div>
+            <p className="mt-3 text-sm leading-5 text-smoke">
+              Runs entirely on the CPU. No GPU, no CUDA, and no Python are needed or used.
+            </p>
           </Panel>
 
           <Panel title="Storage">
