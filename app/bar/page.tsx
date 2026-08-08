@@ -12,7 +12,7 @@ import {
   resizeVoiceBar,
   beginVoiceBarDrag,
   endVoiceBarDrag,
-  nudgeVoiceBar,
+  trackVoiceBarDrag,
   showVoiceBarPassive,
   startAudioCapture,
   startPushToTalk,
@@ -54,7 +54,6 @@ export default function VoiceBar() {
   const pttBusyRef = useRef(false);
   const collapseTimerRef = useRef<number | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
-  const gripRef = useRef<HTMLButtonElement | null>(null);
 
 
   const recording = phase === "listening";
@@ -221,71 +220,46 @@ export default function VoiceBar() {
   }
 
   /**
-   * Drag the bar with a locked pointer.
+   * Drag the bar by following the real cursor.
    *
-   * Pointer Lock is what makes this work at all. Without it the only position
-   * signal available is screenX, and moving the window changes where the
-   * cursor sits relative to it, so each delta is polluted by the previous
-   * move — a feedback loop that reads as jitter. A locked pointer reports pure
-   * relative motion, independent of the window, so deltas can simply be
-   * accumulated. Rust owns the running position and clamps it to the current
-   * output, which also stops the bar from being pushed onto another screen.
+   * Two earlier attempts failed for the same underlying reason. Deriving
+   * position from the webview's own pointer events — screenX, and later
+   * movementX under Pointer Lock — cannot work, because Wayland gives a client
+   * no global pointer position and moving the window changes the very
+   * coordinates the next delta is measured from. That is a feedback loop, and
+   * no amount of smoothing fixes it.
+   *
+   * The compositor does know where the cursor is, so Rust asks it (~3 ms) and
+   * derives the position from cursor-now minus cursor-at-drag-start. Nothing
+   * accumulates, and the window is never read back, so the loop is gone. The
+   * frontend only has to keep a timer running.
    */
   function startDrag(event: React.MouseEvent) {
     if (event.button !== 0) return;
     event.preventDefault();
-    const surface = gripRef.current;
-    if (!surface) return;
 
     let active = true;
-    let pending: { dx: number; dy: number } | null = null;
-    let frame = 0;
-
-    const flush = () => {
-      frame = 0;
-      if (!pending) return;
-      const { dx, dy } = pending;
-      pending = null;
-      void nudgeVoiceBar(dx, dy).catch(() => {});
-    };
-
-    const onMove = (moveEvent: MouseEvent) => {
-      if (!active) return;
-      // movementX/Y under pointer lock is raw relative motion.
-      pending = pending
-        ? { dx: pending.dx + moveEvent.movementX, dy: pending.dy + moveEvent.movementY }
-        : { dx: moveEvent.movementX, dy: moveEvent.movementY };
-      if (!frame) frame = window.requestAnimationFrame(flush);
-    };
+    let timer = 0;
 
     const finish = () => {
       if (!active) return;
       active = false;
-      if (frame) window.cancelAnimationFrame(frame);
-      document.removeEventListener("mousemove", onMove);
+      window.clearInterval(timer);
       document.removeEventListener("mouseup", finish);
-      document.removeEventListener("pointerlockchange", onLockChange);
-      if (document.pointerLockElement) document.exitPointerLock();
+      window.removeEventListener("blur", finish);
       setDragging(false);
       void endVoiceBarDrag().then(setAnchor).catch(() => {});
-    };
-
-    const onLockChange = () => {
-      // Losing the lock mid-drag (Esc, focus change) must end the drag, not
-      // leave it silently accumulating.
-      if (!document.pointerLockElement) finish();
     };
 
     void beginVoiceBarDrag()
       .then(() => {
         setDragging(true);
-        document.addEventListener("mousemove", onMove);
+        // ~60 Hz. The cursor query is the cost, and it is a few milliseconds.
+        timer = window.setInterval(() => {
+          void trackVoiceBarDrag().catch(() => {});
+        }, 16);
         document.addEventListener("mouseup", finish);
-        document.addEventListener("pointerlockchange", onLockChange);
-        // Requesting the lock is best-effort: if the engine refuses, the drag
-        // still works, just without the jitter immunity.
-        const requested = surface.requestPointerLock?.();
-        if (requested && typeof requested.catch === "function") requested.catch(() => {});
+        window.addEventListener("blur", finish);
       })
       .catch(() => {});
   }
@@ -351,7 +325,6 @@ export default function VoiceBar() {
         ) : null}
 
         <button
-          ref={gripRef}
           className={[
             "shrink-0 rounded px-1 text-smoke/50 hover:text-ink",
             dragging ? "cursor-grabbing text-ink" : "cursor-grab",

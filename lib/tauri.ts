@@ -112,9 +112,9 @@ export async function beginVoiceBarDrag(): Promise<void> {
   await invokeCommand("begin_voice_bar_drag");
 }
 
-/** Feed one pointer delta. Position is accumulated in Rust. */
-export async function nudgeVoiceBar(dx: number, dy: number): Promise<void> {
-  await invokeCommand("nudge_voice_bar", { dx, dy });
+/** Follow the cursor for one tick. Rust reads the real cursor position. */
+export async function trackVoiceBarDrag(): Promise<void> {
+  await invokeCommand("track_voice_bar_drag");
 }
 
 /** Finish the drag and snap to the nearest edge. Returns the new dock. */

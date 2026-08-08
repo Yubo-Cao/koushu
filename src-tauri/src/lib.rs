@@ -151,7 +151,7 @@ struct AppState {
     /// Live position during a drag, in logical pixels relative to the output
     /// the bar is on. Held in Rust so the accumulated position never depends
     /// on reading the window back — reading it is what caused the jitter.
-    voice_bar_drag: Mutex<Option<(f64, f64)>>,
+    voice_bar_drag: Mutex<Option<DragState>>,
 }
 
 /// A running streaming-transcription worker. Dropping it stops the worker.
@@ -1859,6 +1859,42 @@ fn show_voice_bar_passive(app: AppHandle) -> Result<(), String> {
     window.show().map_err(|err| err.to_string())
 }
 
+/// Where the bar and the cursor were when a drag began. Positions are derived
+/// from these, never accumulated.
+struct DragState {
+    origin_x: f64,
+    origin_y: f64,
+    cursor_x: f64,
+    cursor_y: f64,
+    have_cursor: bool,
+}
+
+/// Global cursor position in logical pixels, via KWin.
+///
+/// Wayland deliberately hides the pointer from clients, so this asks the
+/// compositor instead. It is the only input that makes dragging work here:
+/// pointer deltas from the webview are polluted by the window's own movement
+/// (a feedback loop that reads as jitter), while an absolute cursor position
+/// is independent of where the window is. Measured at 3-4 ms per call, which
+/// fits comfortably in a frame.
+fn cursor_position() -> Option<(f64, f64)> {
+    let output = Command::new("kdotool")
+        .arg("getmouselocation")
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut x = None;
+    let mut y = None;
+    for field in text.split_whitespace() {
+        if let Some(value) = field.strip_prefix("x:") {
+            x = value.parse::<f64>().ok();
+        } else if let Some(value) = field.strip_prefix("y:") {
+            y = value.parse::<f64>().ok();
+        }
+    }
+    Some((x?, y?))
+}
+
 /// Begin a drag: resolve where the bar currently is, in output-local logical
 /// pixels, and remember it as the running position.
 #[tauri::command]
@@ -1887,33 +1923,56 @@ fn begin_voice_bar_drag(app: AppHandle) -> Result<(), String> {
         geom.height - geom.win_height - margin
     };
 
+    let cursor = cursor_position();
     if let Ok(mut slot) = app.state::<AppState>().voice_bar_drag.lock() {
-        *slot = Some((x, y));
+        *slot = Some(DragState {
+            origin_x: x,
+            origin_y: y,
+            cursor_x: cursor.map(|c| c.0).unwrap_or(0.0),
+            cursor_y: cursor.map(|c| c.1).unwrap_or(0.0),
+            have_cursor: cursor.is_some(),
+        });
     }
     Ok(())
 }
 
-/// Apply a pointer delta. Deltas come from a locked pointer, so they are pure
-/// relative motion and unaffected by the window moving underneath the cursor —
-/// which is what made a screenX-based drag oscillate.
+/// Track the cursor during a drag. Called on a timer by the frontend.
+///
+/// Position is derived from where the cursor is *now* relative to where it was
+/// when the drag started, added to the bar's starting position. Nothing is
+/// accumulated and the window is never read back, so there is no path for the
+/// window's own movement to influence the next update.
 #[tauri::command]
-fn nudge_voice_bar(app: AppHandle, dx: f64, dy: f64) -> Result<(), String> {
+fn track_voice_bar_drag(app: AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("voice-bar")
         .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
-    let geom = panel::output_geometry(&window)?;
-    let state = app.state::<AppState>();
-    let mut slot = state
-        .voice_bar_drag
-        .lock()
-        .map_err(|_| "Drag lock poisoned".to_string())?;
-    let Some((x, y)) = slot.as_mut() else {
+    let Some((cx, cy)) = cursor_position() else {
         return Ok(());
     };
-    // Clamp inside the output: layer-shell margins are output-relative, and
-    // letting them exceed it pushed the bar onto the neighbouring screen.
-    *x = (*x + dx).clamp(0.0, (geom.width - geom.win_width).max(0.0));
-    *y = (*y + dy).clamp(0.0, (geom.height - geom.win_height).max(0.0));
+    let geom = panel::output_geometry(&window)?;
+    let state = app.state::<AppState>();
+    let (x, y) = {
+        let mut slot = state
+            .voice_bar_drag
+            .lock()
+            .map_err(|_| "Drag lock poisoned".to_string())?;
+        let Some(drag) = slot.as_mut() else {
+            return Ok(());
+        };
+        // If the cursor was unavailable at drag start, adopt the first reading
+        // rather than jumping by the full distance from (0,0).
+        if !drag.have_cursor {
+            drag.cursor_x = cx;
+            drag.cursor_y = cy;
+            drag.have_cursor = true;
+        }
+        let x = (drag.origin_x + (cx - drag.cursor_x))
+            .clamp(0.0, (geom.width - geom.win_width).max(0.0));
+        let y = (drag.origin_y + (cy - drag.cursor_y))
+            .clamp(0.0, (geom.height - geom.win_height).max(0.0));
+        (x, y)
+    };
     panel::move_to(&window, x.round() as i32, y.round() as i32)
 }
 
@@ -1929,7 +1988,15 @@ fn end_voice_bar_drag(app: AppHandle) -> Result<String, String> {
         .voice_bar_drag
         .lock()
         .ok()
-        .and_then(|mut slot| slot.take());
+        .and_then(|mut slot| slot.take())
+        .and_then(|drag| {
+            cursor_position().map(|(cx, cy)| {
+                (
+                    drag.origin_x + (cx - drag.cursor_x),
+                    drag.origin_y + (cy - drag.cursor_y),
+                )
+            })
+        });
     let Some((x, y)) = position else {
         return Ok("bottom-center".to_string());
     };
@@ -2188,7 +2255,7 @@ pub fn run() {
             resize_voice_bar,
             snap_voice_bar,
             begin_voice_bar_drag,
-            nudge_voice_bar,
+            track_voice_bar_drag,
             end_voice_bar_drag,
             hide_voice_bar,
             show_settings_window
