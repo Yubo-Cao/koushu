@@ -43,3 +43,13 @@ button {
   scrollbar-width: thin;
   scrollbar-color: #b9afa1 transparent;
 }
+
+/*
+ * The voice bar is a frameless, transparent overlay window. The body
+ * background above would otherwise paint an opaque themed rectangle around the
+ * pill, which is visible against the desktop.
+ */
+body:has(> div > main[data-transparent="true"]),
+body:has(main[data-transparent="true"]) {
+  background: transparent;
+}

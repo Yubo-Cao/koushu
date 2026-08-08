@@ -43,26 +43,25 @@ pub fn anchor(
     // break that and swallow the user's own typing.
     gtk_window.set_keyboard_mode(gtk_layer_shell::KeyboardMode::None);
 
-    for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
-        gtk_window.set_anchor(edge, false);
-        gtk_window.set_layer_shell_margin(edge, 0);
-    }
-
+    // Compute the whole target state first, then apply it edge by edge.
+    //
+    // Clearing every anchor before setting the new ones passes through a state
+    // with no anchors at all. Re-anchoring a live surface that way made the
+    // window vanish, so each edge is written once to its final value and the
+    // surface is never left un-anchored.
     let vertical = if anchor.is_top() { Edge::Top } else { Edge::Bottom };
-    gtk_window.set_anchor(vertical, true);
-    gtk_window.set_layer_shell_margin(vertical, margin);
+    let horizontal = anchor.horizontal().map(|left| {
+        if left {
+            Edge::Left
+        } else {
+            Edge::Right
+        }
+    });
 
-    match anchor.horizontal() {
-        Some(true) => {
-            gtk_window.set_anchor(Edge::Left, true);
-            gtk_window.set_layer_shell_margin(Edge::Left, margin);
-        }
-        Some(false) => {
-            gtk_window.set_anchor(Edge::Right, true);
-            gtk_window.set_layer_shell_margin(Edge::Right, margin);
-        }
-        // Anchoring neither side leaves the surface centred on that axis.
-        None => {}
+    for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+        let wanted = edge == vertical || Some(edge) == horizontal;
+        gtk_window.set_anchor(edge, wanted);
+        gtk_window.set_layer_shell_margin(edge, if wanted { margin } else { 0 });
     }
 
     // Deliberately no exclusive zone: the bar is transient and should overlay

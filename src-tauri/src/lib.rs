@@ -1729,30 +1729,32 @@ fn auto_paste_text(text: String) -> PasteResult {
         return copy_result;
     }
 
+    // Deliberately NOT restoring the previous clipboard afterwards.
+    //
+    // Restoring is the espanso pattern, and it is right for a text expander
+    // that should not disturb what the user had copied. It is wrong here: the
+    // transcript *is* the thing the user just produced, and they expect to be
+    // able to paste it again later. Restoring made every transcription look
+    // like the clipboard silently failed.
+    let _ = previous_clipboard;
+
     thread::sleep(Duration::from_millis(300));
-    let result = match paste_from_clipboard() {
-        Ok(method) => {
-            restore_clipboard_if_unchanged(&text, previous_clipboard);
-            PasteResult {
-                copied: true,
-                pasted: true,
-                method: Some(method),
-                message: "Copied to clipboard and sent paste keystroke.".to_string(),
-                session_type: env::var("XDG_SESSION_TYPE").ok(),
-            }
-        }
-        Err(err) => {
-            restore_clipboard_if_unchanged(&text, previous_clipboard);
-            PasteResult {
-                copied: true,
-                pasted: false,
-                method: None,
-                message: format!("Copied to clipboard, but auto-paste is unavailable: {err}"),
-                session_type: env::var("XDG_SESSION_TYPE").ok(),
-            }
-        }
-    };
-    result
+    match paste_from_clipboard() {
+        Ok(method) => PasteResult {
+            copied: true,
+            pasted: true,
+            method: Some(method),
+            message: "Copied and pasted.".to_string(),
+            session_type: env::var("XDG_SESSION_TYPE").ok(),
+        },
+        Err(err) => PasteResult {
+            copied: true,
+            pasted: false,
+            method: None,
+            message: format!("Copied to clipboard. Auto-paste unavailable: {err}"),
+            session_type: env::var("XDG_SESSION_TYPE").ok(),
+        },
+    }
 }
 
 #[tauri::command]
@@ -2934,16 +2936,6 @@ fn read_clipboard_text() -> Result<String, String> {
         }
     }
     Err("No readable clipboard backend found.".to_string())
-}
-
-fn restore_clipboard_if_unchanged(payload: &str, previous: Option<String>) {
-    let Some(previous) = previous else {
-        return;
-    };
-    thread::sleep(Duration::from_millis(300));
-    if matches!(read_clipboard_text(), Ok(current) if current == payload) {
-        let _ = copy_text_native(&previous);
-    }
 }
 
 fn write_to_command(program: &str, args: &[&str], text: &str) -> Result<(), String> {

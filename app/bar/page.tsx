@@ -251,11 +251,22 @@ export default function VoiceBar() {
   const level = Math.max(0, Math.min(100, inputLevel.percent));
 
   return (
-    <main className="flex h-screen w-screen items-center justify-center bg-transparent">
+    <main
+      data-transparent="true"
+      className="flex h-screen w-screen items-center justify-center bg-transparent"
+    >
       <div
         ref={shellRef}
+        // Suppress the browser's native drag: starting an HTML5 drag on a
+        // layer-shell surface is not something the compositor can service, and
+        // it took the window down with it.
+        draggable={false}
+        onDragStart={(event) => event.preventDefault()}
         onMouseDown={(event) => {
-          if (event.button === 0) setDragging(true);
+          if (event.button === 0) {
+            event.preventDefault();
+            setDragging(true);
+          }
         }}
         className={[
           "inline-flex select-none items-center gap-2 rounded-full border border-black/10",
