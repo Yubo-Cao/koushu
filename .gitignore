@@ -8,3 +8,9 @@ src-tauri/gen
 *.log
 .DS_Store
 tsconfig.tsbuildinfo
+
+# Local credentials — never commit
+openrouter
+*.key
+.env*
+!.env.example
