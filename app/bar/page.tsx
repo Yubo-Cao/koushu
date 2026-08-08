@@ -10,13 +10,22 @@ import {
   getAudioLevel,
   hideVoiceBar,
   listAudioInputs,
+  showVoiceBarPassive,
+  startPushToTalk,
   startStreamingTranscription,
+  stopPushToTalk,
   stopStreamingTranscription,
   startAudioCapture,
   stopAudioCapture,
   transcribeAudio,
 } from "@/lib/tauri";
-import type { AudioInputInfo, AudioLevelInfo, StreamingEvent } from "@/lib/types";
+import type {
+  AudioInputInfo,
+  AudioLevelInfo,
+  HotkeyStatus,
+  PushToTalkEvent,
+  StreamingEvent,
+} from "@/lib/types";
 
 const idleLevel: AudioLevelInfo = { rms: 0, peak: 0, db: -90, percent: 0 };
 // Committed preview segments, joined with the live partial for display.
@@ -35,10 +44,58 @@ export default function VoiceBar() {
   const sessionIdRef = useRef<string | null>(null);
   const segmentsRef = useRef<string[]>([]);
   const levelTimerRef = useRef<number | null>(null);
+  const [hotkey, setHotkey] = useState<HotkeyStatus | null>(null);
+  // The hotkey fires from a background thread, so the handler must not close
+  // over stale `recording` state — read the live value through a ref instead.
+  const recordingRef = useRef(false);
+  const pttBusyRef = useRef(false);
 
   useEffect(() => {
     void refreshAudioInputs();
   }, []);
+
+  useEffect(() => {
+    recordingRef.current = recording;
+  }, [recording]);
+
+  useEffect(() => {
+    let cancelled = false;
+    startPushToTalk(undefined, handlePushToTalk)
+      .then((status) => {
+        if (cancelled) return;
+        setHotkey(status);
+        if (status.backend === "unavailable") setStatus(status.detail);
+      })
+      .catch((error) => setStatus(String(error)));
+    return () => {
+      cancelled = true;
+      void stopPushToTalk().catch(() => {});
+    };
+  }, []);
+
+  async function handlePushToTalk(event: PushToTalkEvent) {
+    // Key repeat and overlapping edges can both re-enter this; one guard
+    // covers the whole press/release cycle.
+    if (pttBusyRef.current) return;
+    if (event.event === "pressed") {
+      if (recordingRef.current) return;
+      pttBusyRef.current = true;
+      try {
+        await showVoiceBarPassive();
+        await start();
+      } finally {
+        pttBusyRef.current = false;
+      }
+    } else if (event.event === "released") {
+      if (!recordingRef.current) return;
+      pttBusyRef.current = true;
+      try {
+        await stop();
+      } finally {
+        pttBusyRef.current = false;
+      }
+    }
+  }
 
   async function refreshAudioInputs() {
     try {
@@ -179,7 +236,15 @@ export default function VoiceBar() {
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex items-center gap-2 text-xs font-medium text-smoke">
             <ClipboardCheck size={13} />
-            {status}
+            <span className="truncate">{status}</span>
+            {hotkey ? (
+              <span
+                className={hotkey.backend === "unavailable" ? "shrink-0 text-[#a43b2e]" : "shrink-0"}
+                title={hotkey.detail}
+              >
+                · {hotkey.backend === "unavailable" ? "no hotkey" : `hold ${hotkey.trigger}`}
+              </span>
+            ) : null}
           </div>
           <p className="truncate text-sm text-ink">{partial || "Waiting for speech"}</p>
         </div>

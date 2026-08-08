@@ -9,6 +9,8 @@ import type {
   ModelDownloadEvent,
   NativeAudioCaptureResult,
   PasteResult,
+  PushToTalkEvent,
+  HotkeyStatus,
   StreamingEvent,
   SessionInfo,
   TranscriptInfo,
@@ -56,6 +58,24 @@ export async function createSession(input: {
 
 export async function setSetting(key: string, value: string): Promise<void> {
   await invokeCommand("set_setting", { key, value });
+}
+
+export async function startPushToTalk(
+  trigger: string | undefined,
+  onEvent: (event: PushToTalkEvent) => void,
+): Promise<HotkeyStatus> {
+  const mod = await import("@tauri-apps/api/core");
+  const channel = new mod.Channel<PushToTalkEvent>();
+  channel.onmessage = onEvent;
+  return mod.invoke<HotkeyStatus>("start_push_to_talk", { trigger, onEvent: channel });
+}
+
+export async function stopPushToTalk(): Promise<void> {
+  await invokeCommand("stop_push_to_talk");
+}
+
+export async function showVoiceBarPassive(): Promise<void> {
+  await invokeCommand("show_voice_bar_passive");
 }
 
 export async function startStreamingTranscription(

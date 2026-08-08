@@ -1578,6 +1578,20 @@ fn show_voice_bar(app: AppHandle) -> Result<(), String> {
     window.set_focus().map_err(|err| err.to_string())
 }
 
+/// Show the voice bar without taking focus.
+///
+/// Push-to-talk fires while another application is focused, and the whole
+/// point is to paste back into that application afterwards. Calling
+/// `set_focus()` here — as `show_voice_bar` does for the manual case — would
+/// steal focus mid-utterance and break the paste target.
+#[tauri::command]
+fn show_voice_bar_passive(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("voice-bar")
+        .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
+    window.show().map_err(|err| err.to_string())
+}
+
 #[tauri::command]
 fn hide_voice_bar(app: AppHandle) -> Result<(), String> {
     let window = app
@@ -1686,6 +1700,7 @@ pub fn run() {
             copy_text,
             auto_paste_text,
             show_voice_bar,
+            show_voice_bar_passive,
             hide_voice_bar,
             show_settings_window
         ])

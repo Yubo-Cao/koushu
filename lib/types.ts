@@ -171,3 +171,19 @@ export type StreamingEvent =
       event: "error";
       data: { error: string };
     };
+
+/** Which mechanism is serving the global hotkey. */
+export type HotkeyBackend = "portal" | "evdev" | "ns-event" | "unavailable";
+
+/**
+ * What the platform managed to set up. `detail` explains *why* a preferred
+ * backend was skipped and is meant to be shown, not logged: a push-to-talk key
+ * that silently does nothing is the worst failure mode.
+ */
+export type HotkeyStatus = {
+  backend: HotkeyBackend;
+  trigger: string;
+  detail: string;
+};
+
+export type PushToTalkEvent = { event: "pressed" } | { event: "released" };
