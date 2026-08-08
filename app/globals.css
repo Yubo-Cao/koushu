@@ -153,6 +153,49 @@
   --r-lg: 20px;
   --r-md: 14px;
   --r-sm: 9px;
+
+  /* --- Type scale --------------------------------------------------------
+     Seven steps, each with its leading attached. This exists because the app
+     had accumulated fifteen distinct one-off sizes — 10.5, 11, 11.5, 12, 12.5,
+     13, 13.5, 14, 14.5, 15, 16, 17, 19, 26, 30 — most of them half a pixel
+     apart, which is not a hierarchy, it is noise. Half-pixel steps cannot be
+     seen; they can only be inconsistent.
+
+     Leading is paired with size on purpose (WWDC 2020, *The Details of UI
+     Typography*): it tracks size inversely, and this is a dense information UI,
+     so the small steps are tight and only reading text gets air. The old global
+     1.6 was applied to 11px labels and 14px prose alike. */
+  --fs-meta: 11px; /* labels, timestamps, group headers */
+  --fs-ui: 12.5px; /* secondary copy, hints */
+  --fs-ctl: 13px; /* every control: buttons, fields, list rows */
+  --fs-read: 14px; /* transcripts and prose */
+  --fs-head: 15px; /* panel and section titles */
+  --fs-title: 17px; /* window/app titles */
+  --fs-display: 22px; /* the one big number on a page */
+
+  /* --- Control metrics ---------------------------------------------------
+     One height ladder for everything that can be clicked. Buttons, selects,
+     text fields and the input meter all resolve to these, so a select next to
+     a button is the same object with a chevron rather than a near-miss.
+
+     30px rather than the previous 36: at 13px text a 36px control is 62% empty
+     vertical space, and the extra 6px per control is what pushed the toolbar
+     into wrapping and the sidebar into showing eight sessions instead of
+     fifteen. */
+  --ctl-h: 30px;
+  --ctl-h-sm: 26px;
+  --ctl-h-lg: 34px;
+  --ctl-px: 0.75rem;
+
+  /* Chrome-level controls are capsules (toolbar, footer, sidebar); controls
+     inside a form panel are rounded rects. Same rule as macOS: a toolbar
+     pop-up is a capsule, a settings field is not. */
+  --r-ctl: var(--r-pill);
+
+  /* The select chevron, as a token so it can follow the colour scheme. It was
+     a hardcoded #888f9c, which is a mid grey chosen for the light scheme and
+     left to fend for itself in the dark one. */
+  --chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 4.6 6 8l3.4-3.4' fill='none' stroke='%23666d7a' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 @media (prefers-color-scheme: dark) {
@@ -212,6 +255,8 @@
     --c-fill: oklch(1 0 0 / 0.07);
     --c-fill-strong: oklch(1 0 0 / 0.13);
     --c-track: oklch(0 0 0 / 0.30);
+
+    --chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 4.6 6 8l3.4-3.4' fill='none' stroke='%23a9aeb9' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
 }
 
@@ -231,15 +276,75 @@
   --pill-text-shadow: none;
 }
 
+/* --- The CJK weight bridge --------------------------------------------------
+
+   Han was rendering a visible step lighter than the Latin beside it, and the
+   cause is packaging, not taste. Noto Sans CJK ships its intermediate weights
+   as *sibling families*: `fc-list` on this machine reports the family
+   "Noto Sans CJK SC" with only `Regular` and `Bold`, while Medium lives in a
+   separate family called "Noto Sans CJK SC Medium". So `font-weight: 500` —
+   which every label, every active list row and every `.vibrant` string in this
+   app asks for — finds no 500 face, falls back to 400 per the CSS matching
+   rules, and lands on Regular. Latin gets a real Medium from Adwaita Sans at
+   the same time. The mixed run is then genuinely two different weights, which
+   is exactly what "中文字重偏轻" describes.
+
+   `font-synthesis-weight: none` (set on body) correctly refuses to fake it, so
+   the fix has to supply the real face. These rules re-assemble the scattered
+   families into one, scoped by `unicode-range` so Latin never touches them.
+
+   `local()` is the whole mechanism — nothing is downloaded, and on a machine
+   without these faces every rule simply fails to match and the stack falls
+   through to the plain families below, as it did before. */
+@font-face {
+  font-family: "UI CJK";
+  src:
+    local("PingFang SC"), local("Source Han Sans SC"), local("Noto Sans CJK SC"),
+    local("Microsoft YaHei");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+2E80-2FDF, U+3000-303F, U+3040-30FF, U+3200-4DBF, U+4E00-9FFF,
+    U+AC00-D7AF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF;
+}
+@font-face {
+  font-family: "UI CJK";
+  src:
+    local("PingFang SC Medium"), local("Source Han Sans SC Medium"),
+    local("Noto Sans CJK SC Medium"), local("Microsoft YaHei");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+2E80-2FDF, U+3000-303F, U+3040-30FF, U+3200-4DBF, U+4E00-9FFF,
+    U+AC00-D7AF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF;
+}
+@font-face {
+  font-family: "UI CJK";
+  src:
+    local("PingFang SC Semibold"), local("Source Han Sans SC Bold"),
+    local("Noto Sans CJK SC Bold"), local("Microsoft YaHei Bold");
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+2E80-2FDF, U+3000-303F, U+3040-30FF, U+3200-4DBF, U+4E00-9FFF,
+    U+AC00-D7AF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF;
+}
+
 @theme inline {
   /* Latin first, CJK behind it, so mixed runs take their Latin glyphs from a
      UI face and only fall through to Noto/PingFang for Han. `system-ui` is
      deliberately not at the front: on this Linux box fontconfig resolves it to
-     Noto Sans CJK, whose Latin is wide and flat for interface text. */
+     Noto Sans CJK, whose Latin is wide and flat for interface text.
+
+     "UI CJK" (defined above) sits ahead of the raw CJK families so Han resolves
+     to a face that actually has the requested weight. */
   --font-sans:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text",
     "Segoe UI", Inter, "Adwaita Sans", "Noto Sans", Roboto, "Helvetica Neue",
-    Arial, "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC",
+    Arial, "UI CJK", "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC",
     "Noto Sans CJK SC", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji";
   --font-mono:
@@ -263,10 +368,33 @@
   --color-paper: var(--c-paper);
   --color-panel: var(--c-panel);
 
+  /* The type scale as utilities, so a call site says `text-meta` rather than
+     `text-[11.5px]` and the scale can be retuned in one place. Each carries its
+     own leading — see the `--fs-*` block for why size and leading travel
+     together. */
+  --text-meta: var(--fs-meta);
+  --text-meta--line-height: 1.45;
+  --text-ui: var(--fs-ui);
+  --text-ui--line-height: 1.55;
+  --text-ctl: var(--fs-ctl);
+  --text-ctl--line-height: 1.35;
+  --text-read: var(--fs-read);
+  --text-read--line-height: 1.7;
+  --text-head: var(--fs-head);
+  --text-head--line-height: 1.35;
+  --text-title: var(--fs-title);
+  --text-title--line-height: 1.28;
+  --text-display: var(--fs-display);
+  --text-display--line-height: 1.2;
+
   --radius-pill: var(--r-pill);
   --radius-lg: var(--r-lg);
   --radius-md: var(--r-md);
   --radius-sm: var(--r-sm);
+
+  --spacing-ctl: var(--ctl-h);
+  --spacing-ctl-sm: var(--ctl-h-sm);
+  --spacing-ctl-lg: var(--ctl-h-lg);
 
   --ease-glass: var(--ease);
 }
@@ -288,12 +416,20 @@ body {
   margin: 0;
   color: var(--c-ink);
   font-family: var(--font-sans);
-  /* CJK sets on a taller body than Latin and needs the extra leading; 1.6 is
-     comfortable for both without looking airy in dense UI. */
-  line-height: 1.6;
+  font-size: var(--fs-ctl);
+  /* A floor, not the value anything actually uses: every step of the scale
+     carries its own leading (see `--fs-*`). 1.6 as a global was the reason an
+     11px label occupied 18px and a two-line list row occupied 57px — CJK does
+     want more air than Latin, but it wants it on reading text, not on chrome. */
+  line-height: 1.5;
+  /* Real weights only. The CJK families' Medium is supplied by the `UI CJK`
+     @font-face bridge above rather than by faking a stem. */
   font-synthesis-weight: none;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  /* No `-webkit-font-smoothing: antialiased` here. On macOS it thins strokes,
+     and on this Linux/WebKitGTK target it forces greyscale AA over the
+     fontconfig default, which costs Han — dense glyphs at 11-13px are exactly
+     where stem rendering shows. The platform's own rasterisation is better
+     tuned for this than a blanket override. */
   background: var(--ambient-base);
   background-image: var(--ambient);
   background-attachment: fixed;
@@ -320,22 +456,22 @@ button {
 
 /* Tracking is size-specific. Large Latin reads too loose as it grows; small
    text reads too tight. CJK wants neither, so these stay small enough to be
-   safe in mixed runs. */
+   safe in mixed runs.
+
+   Tracking only — leading now travels with the size (`--text-*--line-height`),
+   so these no longer set it. They used to, which meant a `.t-body` on a 12px
+   hint got the 14px prose leading and every size pairing had two owners. */
 .t-display {
   letter-spacing: -0.021em;
-  line-height: 1.12;
 }
 .t-title {
   letter-spacing: -0.014em;
-  line-height: 1.25;
 }
 .t-head {
   letter-spacing: -0.008em;
-  line-height: 1.35;
 }
 .t-body {
   letter-spacing: 0;
-  line-height: 1.72;
 }
 .t-micro {
   letter-spacing: 0.012em;
@@ -357,10 +493,12 @@ button {
   color: var(--c-ink);
 }
 
+/* No `border-radius` here. It was setting the *element's* radius while focused,
+   so every capsule button squared off its corners the moment it took keyboard
+   focus. The outline already follows whatever radius the element has. */
 :focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: 2px;
-  border-radius: var(--r-sm);
 }
 
 /* ==========================================================================
@@ -377,6 +515,9 @@ button {
      middle masked out, filled with a gradient so the highlight travels around
      the curve. Painted above content on purpose: it is the edge of the glass,
      and nothing should sit on top of it. */
+  .rim {
+    position: relative;
+  }
   .rim::before {
     content: "";
     position: absolute;
@@ -507,112 +648,176 @@ button {
     transform: scale(0.97);
   }
 
-  /* Buttons carry the same material as the panels, one step lighter so they read
-     as the interactive layer. They do not declare their own backdrop-filter:
-     these sit on glass chrome already, and blurring a blurred surface is where
-     legibility falls apart. */
-  .btn {
-    --btn-fill: var(--c-fill);
-    --btn-border: var(--c-line);
-    background: var(--btn-fill);
-    border: 1px solid var(--btn-border);
+  /* ---- One control, three roles -----------------------------------------
+
+     A button, a select and the input meter used to be built from three
+     different recipes that happened to agree on a height. They did not agree on
+     anything else: `.btn` filled with `--c-fill` (a tint), `.field` filled with
+     `--glass-raised-fill` + the raised tint (a *material*), and the meter used
+     `.glass`. Sitting side by side on the same toolbar that reads as three
+     unrelated widgets — which is the "并不是非常契合" the user was pointing at,
+     and it is a material mismatch rather than a font one.
+
+     Two rules settle it:
+
+     - One fill. A control on chrome is a tint over the chrome, never a second
+       piece of glass. Stacking a translucent surface on a translucent surface
+       is the one thing the material system says not to do, and `.field` was
+       doing it on every toolbar select.
+     - One ladder. Height, inline padding, type size and radius all come from
+       the `--ctl-*` tokens, so a select is a button with a chevron.
+
+     None of this lives in a utility on the base className: utilities cannot be
+     overridden by other utilities of the same property, so a caller's `px-0` or
+     `h-8` lost to the base `px-3.5`/`h-9`. From the components layer they are
+     overridable, which is the whole point of accepting a className. */
+  .ctl,
+  .btn,
+  .field {
+    --ctl-fill: var(--c-fill);
+    --ctl-border: var(--c-line);
+    height: var(--ctl-h);
+    padding-inline: var(--ctl-px);
+    font-family: inherit;
+    font-size: var(--fs-ctl);
+    line-height: 1;
+    background-color: var(--ctl-fill);
+    background-image: none;
+    border: 1px solid var(--ctl-border);
+    border-radius: var(--r-ctl);
     color: var(--c-ink);
-    /* Default padding belongs here, not in a utility on the base className: a
-       utility cannot be overridden by another utility of the same property, so
-       a caller's `px-0` lost to the base `px-3.5`. From the components layer it
-       is overridable, which is the whole point of accepting a className. */
-    padding-inline: 0.875rem;
     box-shadow:
       inset 0 1px 0 0 var(--spec-top),
       inset 0 -8px 14px -12px var(--spec-shade);
+  }
+
+  .ctl-sm {
+    height: var(--ctl-h-sm);
+    padding-inline: 0.5rem;
+  }
+  .ctl-lg {
+    height: var(--ctl-h-lg);
+    padding-inline: 1rem;
+  }
+
+  /* A vertical hairline between control groups. Grouping by proximity alone
+     stops working once five controls sit in one row at the same gap. */
+  .ctl-sep {
+    flex: none;
+    width: 1px;
+    height: 16px;
+    margin-inline: 0.25rem;
+    background: var(--c-line);
+  }
+
+  .btn {
+    font-weight: 500;
   }
   /* An icon must never be the thing that gives way when a button is narrow. */
   .btn > svg {
     flex: none;
   }
   .btn:hover:not(:disabled) {
-    --btn-fill: var(--c-fill-strong);
+    --ctl-fill: var(--c-fill-strong);
   }
 
   .btn-primary {
-    --btn-fill: var(--c-accent);
-    --btn-border: transparent;
+    --ctl-fill: var(--c-accent);
+    --ctl-border: transparent;
     color: var(--c-accent-ink);
     box-shadow:
       inset 0 1px 0 0 oklch(1 0 0 / 0.36),
       inset 0 -10px 16px -12px oklch(0 0 0 / 0.22);
   }
   .btn-primary:hover:not(:disabled) {
-    --btn-fill: color-mix(in oklab, var(--c-accent) 88%, black);
+    --ctl-fill: color-mix(in oklab, var(--c-accent) 88%, black);
   }
 
   .btn-danger {
-    --btn-fill: color-mix(in oklab, var(--c-rust) 15%, transparent);
-    --btn-border: color-mix(in oklab, var(--c-rust) 38%, transparent);
+    --ctl-fill: color-mix(in oklab, var(--c-rust) 15%, transparent);
+    --ctl-border: color-mix(in oklab, var(--c-rust) 38%, transparent);
     color: var(--c-rust);
   }
   .btn-danger:hover:not(:disabled) {
-    --btn-fill: color-mix(in oklab, var(--c-rust) 24%, transparent);
+    --ctl-fill: color-mix(in oklab, var(--c-rust) 24%, transparent);
   }
 
   .btn-ghost {
-    --btn-fill: transparent;
-    --btn-border: transparent;
+    --ctl-fill: transparent;
+    --ctl-border: transparent;
     box-shadow: none;
   }
   .btn-ghost:hover:not(:disabled) {
-    --btn-fill: var(--c-fill);
+    --ctl-fill: var(--c-fill);
   }
 
   /* Native selects cannot be fully restyled in WebKit, but appearance:none plus
-     a drawn chevron gets them onto the same material as everything else. */
+     a drawn chevron gets them onto the control recipe above. */
   .field {
     appearance: none;
     -webkit-appearance: none;
-    /* Inherit nothing: form controls default to the UA's 16px, which sat a
-       full step above the 12.5px body text beside them and made the toolbar
-       read as a different app than the footer. */
-    font-family: inherit;
-    font-size: 13px;
-    line-height: 1.2;
-    background-color: var(--glass-raised-fill);
-    background-image: var(--glass-raised-tint);
-    border: 1px solid var(--c-line);
+    /* A field shows a value; a button shows a label. Values stay at book weight
+       so the toolbar does not read as five things shouting at once. */
+    font-weight: 400;
+    /* Chrome is capsules, forms are rounded rects — the same split macOS makes
+       between a toolbar pop-up and a settings field. `.field-pill` opts in. */
     border-radius: var(--r-sm);
-    color: var(--c-ink);
-    box-shadow:
-      inset 0 1px 0 0 var(--spec-top),
-      inset 0 -10px 18px -14px var(--spec-shade);
+    text-overflow: ellipsis;
     transition:
       border-color var(--dur-fast) var(--ease),
       box-shadow var(--dur-fast) var(--ease);
   }
-  .field:hover:not(:disabled) {
-    border-color: color-mix(in oklab, var(--c-ink) 22%, transparent);
+  .field-pill {
+    border-radius: var(--r-pill);
   }
-  .field:focus {
+  .field:hover:not(:disabled) {
+    --ctl-border: color-mix(in oklab, var(--c-ink) 24%, transparent);
+  }
+  .field:focus,
+  .btn:focus-visible,
+  .field:focus-visible {
     outline: none;
-    border-color: var(--c-accent);
+    --ctl-border: var(--c-accent);
     box-shadow:
       inset 0 1px 0 0 var(--spec-top),
-      0 0 0 3px color-mix(in oklab, var(--c-accent) 24%, transparent);
+      0 0 0 3px color-mix(in oklab, var(--c-accent) 26%, transparent);
   }
   .field:disabled {
     opacity: 0.55;
   }
 
   select.field {
-    padding-right: 2rem;
-    background-image:
-      url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 4.6 6 8l3.4-3.4' fill='none' stroke='%23888f9c' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
-      var(--glass-raised-tint);
-    background-repeat: no-repeat, no-repeat;
-    background-position:
-      right 0.6rem center,
-      0 0;
-    background-size:
-      12px 12px,
-      auto;
+    padding-right: 1.75rem;
+    background-image: var(--chevron);
+    background-repeat: no-repeat;
+    background-position: right 0.55rem center;
+    background-size: 12px 12px;
+  }
+
+  /* A select with a leading glyph. Three unlabelled pills reading
+     "Fun-ASR-Nano", "中文", "Default microphone" leave the user to infer what
+     each one governs, and "中文" on its own genuinely does not say "language".
+     A 13px icon costs ~18px of width where a text label costs ~48px, which is
+     the difference between the toolbar fitting and the toolbar wrapping. */
+  .select-lead {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    align-items: center;
+  }
+  .select-lead > svg {
+    position: absolute;
+    left: 0.625rem;
+    z-index: 1;
+    color: var(--c-smoke);
+    pointer-events: none;
+  }
+  .select-lead > .field {
+    width: 100%;
+    padding-left: 1.875rem;
+  }
+  .select-lead:has(> .field:disabled) > svg {
+    opacity: 0.55;
   }
 
   /* Inline code inside prose: a quiet chip, not a second typeface shouting. */

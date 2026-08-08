@@ -215,37 +215,37 @@ export default function SettingsPage() {
   }
 
   if (!bootstrap) {
-    return <main className="flex min-h-screen items-center justify-center text-sm text-smoke">Loading settings</main>;
+    return <main className="flex min-h-screen items-center justify-center text-ctl text-smoke">Loading settings</main>;
   }
 
   return (
-    <main className="min-h-dvh overflow-y-auto px-5 py-5 md:px-6">
-      <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
+    <main className="min-h-dvh overflow-y-auto px-4 py-4 md:px-5 md:py-5">
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="t-display text-[26px] font-semibold">Settings</h1>
-          <p className="mt-1.5 text-[13px] text-smoke">Models, defaults, transcript storage, and Linux paste diagnostics.</p>
+          <h1 className="t-display text-display font-semibold">Settings</h1>
+          <p className="t-body mt-1 text-ui text-smoke">Models, defaults, transcript storage, and Linux paste diagnostics.</p>
         </div>
-        <Button icon={<RefreshCw size={16} />} onClick={refresh}>
+        <Button icon={<RefreshCw size={15} />} onClick={refresh}>
           Refresh
         </Button>
       </header>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
         <section className="space-y-4">
           <Panel title="Models">
             <div className="divide-y divide-line-soft">
               {bootstrap.models.map((model) => (
-                <div key={model.id} className="grid gap-3 py-4 first:pt-0 last:pb-0 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                <div key={model.id} className="grid gap-3 py-3 first:pt-0 last:pb-0 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <HardDrive size={16} className="text-moss" />
-                      <h2 className="text-[14px] font-semibold">{model.name}</h2>
+                      <HardDrive size={15} className="shrink-0 text-moss" />
+                      <h2 className="truncate text-ctl font-semibold">{model.name}</h2>
                     </div>
-                    <p className="mt-1 text-[13px] text-smoke">{model.repo_id}</p>
-                    <p className="mt-1 truncate font-mono text-[11px] text-faint">{model.local_path}</p>
-                    {model.last_error ? <p className="mt-2 text-[13px] text-rust">{model.last_error}</p> : null}
+                    <p className="mt-0.5 truncate text-ui text-smoke">{model.repo_id}</p>
+                    <p className="mt-0.5 truncate font-mono text-meta text-faint">{model.local_path}</p>
+                    {model.last_error ? <p className="mt-1.5 text-ui text-rust">{model.last_error}</p> : null}
                     {download?.modelId === model.id ? (
-                      <div className="mt-3 max-w-xl">
+                      <div className="mt-2.5 max-w-xl">
                         <DownloadProgress
                           download={download}
                           onPause={download.active ? () => pauseDownload(model.id) : undefined}
@@ -254,9 +254,9 @@ export default function SettingsPage() {
                     ) : null}
                   </div>
                   <div className="flex shrink-0 items-center justify-end gap-3">
-                    <span className="tnum text-[12.5px] text-smoke">{formatBytes(model.size_bytes)}</span>
+                    <span className="tnum text-meta text-smoke">{formatBytes(model.size_bytes)}</span>
                     <Button
-                      icon={<Download size={16} />}
+                      icon={<Download size={15} />}
                       disabled={busy !== null || model.status === "installed"}
                       onClick={() => install(model)}
                     >
@@ -269,11 +269,10 @@ export default function SettingsPage() {
           </Panel>
 
           <Panel title="Defaults">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <label className="text-[13px]">
-                <span className="t-micro mb-1.5 block text-[11.5px] font-medium text-smoke">Model</span>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <Field label="Model">
                 <select
-                  className="field h-10 w-full pl-3.5 pr-9 text-[13px]"
+                  className="field w-full"
                   value={defaultModel}
                   onChange={(event) => setDefaultModel(event.target.value)}
                 >
@@ -283,11 +282,10 @@ export default function SettingsPage() {
                     </option>
                   ))}
                 </select>
-              </label>
-              <label className="text-[13px]">
-                <span className="t-micro mb-1.5 block text-[11.5px] font-medium text-smoke">Language</span>
+              </Field>
+              <Field label="Language">
                 <select
-                  className="field h-10 w-full pl-3.5 pr-9 text-[13px]"
+                  className="field w-full"
                   value={defaultLanguage}
                   onChange={(event) => setDefaultLanguage(event.target.value)}
                 >
@@ -297,7 +295,7 @@ export default function SettingsPage() {
                     </option>
                   ))}
                 </select>
-              </label>
+              </Field>
               <Info
                 label="Runtime"
                 value={backendLabel(
@@ -311,20 +309,20 @@ export default function SettingsPage() {
         <aside className="space-y-4">
           <Panel title="Trial">
             {trial?.licensed ? (
-              <p className="t-body text-[13px] text-smoke">
+              <p className="t-body text-ui text-smoke">
                 Licensed. Thank you — that genuinely funds this.
               </p>
             ) : trial ? (
               <>
                 <div className="mb-2 flex items-baseline justify-between">
-                  <span className="t-title text-[15px] font-semibold">
+                  <span className="tnum t-title text-head font-semibold">
                     {Math.floor(trial.usedSeconds / 60)} min
                   </span>
-                  <span className="text-[12px] text-smoke">
+                  <span className="tnum text-meta text-smoke">
                     of {Math.round(trial.limitSeconds / 60)} min
                   </span>
                 </div>
-                <div className="h-1.5 overflow-hidden rounded-pill bg-fill">
+                <div className="h-1.5 overflow-hidden rounded-pill bg-track">
                   <div
                     className="h-full rounded-pill bg-accent transition-all"
                     style={{
@@ -332,7 +330,7 @@ export default function SettingsPage() {
                     }}
                   />
                 </div>
-                <p className="t-body mt-3 text-[12px] leading-5 text-smoke">
+                <p className="t-body mt-2.5 text-ui text-smoke">
                   Counts speech detected by VAD, not how long you held the key.
                   Local transcription keeps working; this only tracks the free
                   build&rsquo;s budget.
@@ -342,33 +340,33 @@ export default function SettingsPage() {
           </Panel>
 
           <Panel title="Runtime">
-            <div className="mb-4 flex items-center gap-2 text-sm">
-              <Cpu size={16} className={bootstrap.platform.bundled_asr ? "text-moss" : "text-rust"} />
+            <div className="mb-3 flex items-center gap-2 text-ctl">
+              <Cpu size={15} className={bootstrap.platform.bundled_asr ? "text-moss" : "text-rust"} />
               <span className="font-medium">
                 {bootstrap.platform.bundled_asr ? "Bundled runtime ready" : "Runtime missing"}
               </span>
             </div>
-            <div className="space-y-3">
+            <div className="space-y-1.5">
               <Info label="Engine" value="llama.cpp (official Fun-ASR)" />
               <Info label="Compute" value="CPU only" />
               <Info label="Platform" value={`${bootstrap.platform.os} ${bootstrap.platform.arch}`} />
             </div>
-            <p className="t-body mt-3 text-[13px] text-smoke">
+            <p className="t-body mt-2.5 text-ui text-smoke">
               Runs entirely on the CPU. No GPU, no CUDA, and no Python are needed or used.
             </p>
           </Panel>
 
           <Panel title="Cloud transcription">
-            <p className="t-body mb-3 text-[13px] text-smoke">
+            <p className="t-body mb-3 text-ui text-smoke">
               Optional. Any OpenAI-compatible <code>/v1/audio/transcriptions</code>{" "}
               endpoint (OpenAI, Groq, or a local whisper server). Select
               &ldquo;Cloud transcription&rdquo; as the model to use it. The local
               model keeps running the live preview either way.
             </p>
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               <Field label="Base URL">
                 <input
-                  className="field h-9 w-full px-3 text-[13px]"
+                  className="field w-full"
                   placeholder="https://api.groq.com/openai/v1"
                   value={asrBaseUrl}
                   onChange={(event) => setAsrBaseUrl(event.target.value)}
@@ -376,7 +374,7 @@ export default function SettingsPage() {
               </Field>
               <Field label="Model">
                 <input
-                  className="field h-9 w-full px-3 text-[13px]"
+                  className="field w-full"
                   placeholder="whisper-large-v3-turbo"
                   value={asrModel}
                   onChange={(event) => setAsrModel(event.target.value)}
@@ -384,7 +382,7 @@ export default function SettingsPage() {
               </Field>
               <Field label="Language hint (blank = autodetect)">
                 <input
-                  className="field h-9 w-full px-3 text-[13px]"
+                  className="field w-full"
                   placeholder="leave blank for code-switched speech"
                   value={asrLanguage}
                   onChange={(event) => setAsrLanguage(event.target.value)}
@@ -393,7 +391,7 @@ export default function SettingsPage() {
               <Field label="API key">
                 <input
                   type="password"
-                  className="field h-9 w-full px-3 text-[13px]"
+                  className="field w-full"
                   placeholder="Leave blank to keep the stored key"
                   value={asrKeyDraft}
                   onChange={(event) => setAsrKeyDraft(event.target.value)}
@@ -403,15 +401,15 @@ export default function SettingsPage() {
           </Panel>
 
           <Panel title="Markdown formatting">
-            <p className="t-body mb-3 text-[13px] text-smoke">
+            <p className="t-body mb-3 text-ui text-smoke">
               Optional. Any OpenAI-compatible endpoint works, including a local
               server. Transcripts are kept as spoken; the formatted version is
               stored alongside them.
             </p>
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               <Field label="Base URL">
                 <input
-                  className="field h-9 w-full px-3 text-[13px]"
+                  className="field w-full"
                   placeholder="http://localhost:11434/v1"
                   value={llmBaseUrl}
                   onChange={(event) => setLlmBaseUrl(event.target.value)}
@@ -419,7 +417,7 @@ export default function SettingsPage() {
               </Field>
               <Field label="Model">
                 <input
-                  className="field h-9 w-full px-3 text-[13px]"
+                  className="field w-full"
                   placeholder="qwen2.5:7b"
                   value={llmModel}
                   onChange={(event) => setLlmModel(event.target.value)}
@@ -428,7 +426,7 @@ export default function SettingsPage() {
               <Field label={llm?.hasApiKey ? "API key (stored)" : "API key"}>
                 <input
                   type="password"
-                  className="field h-9 w-full px-3 text-[13px]"
+                  className="field w-full"
                   placeholder={llm?.hasApiKey ? "Leave blank to keep" : "Optional for local servers"}
                   value={apiKeyDraft}
                   onChange={(event) => setApiKeyDraft(event.target.value)}
@@ -448,7 +446,7 @@ export default function SettingsPage() {
               ) : null}
               <Field label="Preset">
                 <select
-                  className="field h-9 w-full pl-3.5 pr-9 text-[13px]"
+                  className="field w-full"
                   value={llmPreset}
                   onChange={(event) => setLlmPreset(event.target.value)}
                 >
@@ -459,11 +457,11 @@ export default function SettingsPage() {
                   ))}
                 </select>
               </Field>
-              <p className="t-body text-[11.5px] text-smoke">
+              <p className="t-body text-meta text-smoke">
                 {llm?.presets.find((preset) => preset.id === llmPreset)?.description}
               </p>
             </div>
-            <p className="t-body mt-3 text-[11.5px] text-smoke">
+            <p className="t-body mt-3 text-meta text-smoke">
               The key is stored in the system keychain, not in the app database.
             </p>
           </Panel>
@@ -471,25 +469,27 @@ export default function SettingsPage() {
           <Panel title="Storage">
             <Toggle label="Retain audio files" checked={retainAudio} onChange={setRetainAudio} />
             <Toggle label="Floating bar auto-paste" checked={autoPaste} onChange={setAutoPaste} />
-            <Button className="mt-4 w-full" variant="primary" icon={<Save size={16} />} disabled={busy !== null} onClick={saveSettings}>
+            <Button className="mt-3 w-full" variant="primary" icon={<Save size={15} />} disabled={busy !== null} onClick={saveSettings}>
               Save Settings
             </Button>
           </Panel>
 
           <Panel title="Linux Paste">
-            <Info label="Session" value={bootstrap.platform.session_type || "unknown"} />
-            <Info label="Wayland" value={bootstrap.platform.wayland_display ? "yes" : "no"} />
-            <Info label="X11" value={bootstrap.platform.x11_display ? "yes" : "no"} />
-            <Info label="Tools" value={bootstrap.platform.paste_tools.join(", ") || "none"} />
+            <div className="space-y-1.5">
+              <Info label="Session" value={bootstrap.platform.session_type || "unknown"} />
+              <Info label="Wayland" value={bootstrap.platform.wayland_display ? "yes" : "no"} />
+              <Info label="X11" value={bootstrap.platform.x11_display ? "yes" : "no"} />
+              <Info label="Tools" value={bootstrap.platform.paste_tools.join(", ") || "none"} />
+            </div>
           </Panel>
 
           <Panel title="Setup">
-            <Button className="w-full" icon={<RotateCcw size={16} />} onClick={showSetupAgain}>
+            <Button className="w-full" icon={<RotateCcw size={15} />} onClick={showSetupAgain}>
               Show Setup Again
             </Button>
           </Panel>
 
-          {message ? <p className="glass rim rounded-md p-3 text-[13px] text-smoke">{message}</p> : null}
+          {message ? <p className="glass rim rounded-md p-3 text-ui text-smoke">{message}</p> : null}
         </aside>
       </div>
     </main>
@@ -498,8 +498,8 @@ export default function SettingsPage() {
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="glass rim rounded-lg p-4">
-      <h2 className="t-head mb-4 text-[14.5px] font-semibold">{title}</h2>
+    <section className="glass rim rounded-lg p-3.5">
+      <h2 className="t-head mb-3 text-head font-semibold">{title}</h2>
       {children}
     </section>
   );
@@ -515,7 +515,7 @@ function Toggle({
   onChange: (value: boolean) => void;
 }) {
   return (
-    <label className="mb-3 flex items-center justify-between gap-4 text-[13px]">
+    <label className="mb-2.5 flex items-center justify-between gap-4 text-ctl">
       <span>{label}</span>
       <input
         className="h-4 w-4 accent-accent"
@@ -530,7 +530,7 @@ function Toggle({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="t-micro mb-1.5 block text-[11.5px] font-medium text-smoke">{label}</span>
+      <span className="t-micro mb-1 block text-meta font-medium text-smoke">{label}</span>
       {children}
     </label>
   );
@@ -538,9 +538,11 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="mb-2.5 flex items-start justify-between gap-4 text-[13px]">
-      <span className="text-smoke">{label}</span>
-      <span className="max-w-[190px] text-right font-medium text-ink">{value}</span>
+    <div className="flex items-baseline justify-between gap-4 text-ctl">
+      <span className="shrink-0 text-smoke">{label}</span>
+      <span className="min-w-0 truncate text-right font-medium text-ink" title={value}>
+        {value}
+      </span>
     </div>
   );
 }

@@ -17,17 +17,17 @@ export function DownloadProgress({ download, onPause }: DownloadProgressProps) {
       : null;
 
   return (
-    <div className="glass rim rounded-md p-3">
+    <div className="glass rim rounded-md p-2.5">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-[13px] font-medium text-ink">{download.message}</p>
-          <p className="tnum t-micro mt-0.5 text-[11.5px] text-smoke">
+          <p className="truncate text-ctl font-medium text-ink">{download.message}</p>
+          <p className="tnum t-micro text-meta text-smoke">
             {formatDownloadProgress(download.downloadedBytes, download.totalBytes)}
             {percent !== null ? ` · ${percent.toFixed(0)}%` : ""}
           </p>
         </div>
         {download.active && onPause ? (
-          <Button className="h-8 shrink-0 px-2.5" icon={<Pause size={14} />} onClick={onPause}>
+          <Button size="sm" className="shrink-0" icon={<Pause size={13} />} onClick={onPause}>
             Pause
           </Button>
         ) : null}

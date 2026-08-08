@@ -1,8 +1,10 @@
 "use client";
 
 import {
+  Boxes,
   Copy,
   Download,
+  Languages,
   Mic,
   PanelTop,
   Plus,
@@ -379,28 +381,32 @@ export default function Home() {
     */
     <>
       <Confetti fire={celebrate} onDone={() => setCelebrate(false)} />
-      <main className="grid h-dvh min-h-0 grid-cols-[254px_minmax(0,1fr)] lg:grid-cols-[282px_minmax(0,1fr)]">
+      <main className="grid h-dvh min-h-0 grid-cols-[238px_minmax(0,1fr)] lg:grid-cols-[266px_minmax(0,1fr)]">
       <aside className="hairline-r relative min-h-0">
         <div className="scrollbar-thin absolute inset-0 flex flex-col overflow-y-auto">
-          <div className="glass-chrome sticky top-0 z-20 px-4 pt-4 pb-3">
-            <div className="mb-3.5 flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <h1 className="t-title text-[17px] font-semibold">Fun ASR</h1>
-                <p className="t-micro text-[11px] text-smoke">0.0.2 Linux</p>
+          <div className="glass-chrome sticky top-0 z-20 px-3 pt-3 pb-2.5">
+            {/* The version was a second line under the title, which cost 18px of
+                sticky header for a string nobody reads twice. Beside the name it
+                costs nothing and still answers "which build is this". */}
+            <div className="mb-2.5 flex items-center justify-between gap-2 pl-1">
+              <div className="flex min-w-0 items-baseline gap-2">
+                <h1 className="t-title text-head font-semibold">Fun ASR</h1>
+                <span className="tnum t-micro text-meta text-faint">0.0.2</span>
               </div>
               <Button
                 variant="ghost"
-                className="h-9 w-9 px-0"
+                size="sm"
+                className="w-[26px] px-0"
                 title="Settings"
                 onClick={showSettingsWindow}
               >
-                <Settings size={17} />
+                <Settings size={16} />
               </Button>
             </div>
             <Button
               variant="primary"
               className="w-full"
-              icon={<Plus size={16} />}
+              icon={<Plus size={15} />}
               disabled={busy === "session"}
               onClick={newSession}
             >
@@ -408,26 +414,32 @@ export default function Home() {
             </Button>
           </div>
 
-          <div className="flex-1 px-3 pt-3 pb-4">
+          {/* One line per session, not two. The language was a full second line
+              at 11px/1.6 under every title, which made a row 57px tall and put
+              eight sessions on a screen that comfortably holds fifteen. It is
+              secondary information, so it sits where secondary information goes
+              — trailing, quiet, on the same line. */}
+          <div className="flex-1 px-2 pt-2.5 pb-4">
             {groupedSessions.map(([date, dateSessions]) => (
-              <section key={date} className="mb-5">
-                <p className="t-micro mb-2 px-2 text-[10.5px] font-semibold tracking-wider uppercase text-faint">
+              <section key={date} className="mb-3.5">
+                <p className="t-micro mb-1 px-2.5 text-meta font-semibold tracking-wider uppercase text-faint">
                   {date}
                 </p>
-                <div className="space-y-0.5">
+                <div className="space-y-px">
                   {dateSessions.map((session) => (
                     <button
                       key={session.id}
                       className={[
-                        "press block w-full rounded-md px-3 py-2 text-left",
+                        "press flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left",
                         activeSession?.id === session.id
                           ? "glass rim font-medium text-ink"
                           : "text-ink-2 hover:bg-fill",
                       ].join(" ")}
+                      title={session.title}
                       onClick={() => setActiveSession(session)}
                     >
-                      <span className="block truncate text-[13.5px]">{session.title}</span>
-                      <span className="t-micro mt-0.5 block text-[11px] text-smoke">
+                      <span className="min-w-0 flex-1 truncate text-ctl">{session.title}</span>
+                      <span className="t-micro shrink-0 text-meta text-faint">
                         {session.language}
                       </span>
                     </button>
@@ -441,88 +453,106 @@ export default function Home() {
 
       <section className="relative min-h-0">
         <div className="scrollbar-thin absolute inset-0 flex flex-col overflow-y-auto">
-          <header className="glass-chrome sticky top-0 z-20 flex flex-wrap items-start justify-between gap-3 px-5 py-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="min-w-0">
-                <h2 className="t-head truncate text-[15px] font-semibold">
+          {/*
+            The microphone picker used to live here, three pills from the meter
+            that tells you whether it is working and a whole window away from
+            the Talk button the footer text told you to press next. It now sits
+            in the footer beside both. That is the grouping rule — put a control
+            next to what it affects — and it is also what fixed the truncation:
+            the mic name is the one value here with no upper bound, and taking
+            it out of the toolbar gave the two that remain room to show their
+            values in full.
+
+            The Download button renders only when there is something to
+            download. A permanently disabled "Installed" button is 110px of
+            toolbar spent on a state the status line already reports.
+          */}
+          <header className="glass-chrome sticky top-0 z-20 px-4 py-2.5">
+            <div className="flex items-center gap-4">
+              <div className="min-w-0 flex-1">
+                <h2 className="t-head truncate text-head font-semibold">
                   {activeSession?.title || "No session"}
                 </h2>
-                <p className="t-micro text-[11.5px] text-smoke">{status}</p>
-                {download?.modelId === modelId ? (
-                  <div className="mt-2 w-[min(520px,calc(100vw-340px))] min-w-[280px]">
-                    <DownloadProgress
-                      download={download}
-                      onPause={download.active ? pauseDownload : undefined}
-                    />
-                  </div>
+                <p className="t-micro truncate text-meta text-smoke">{status}</p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <SelectField
+                  icon={<Boxes size={13} />}
+                  title="Transcription model"
+                  className="w-[176px]"
+                  value={modelId}
+                  onChange={setModelId}
+                >
+                  {bootstrap.models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name.replace(/\s*\(.*\)$/, "")}
+                    </option>
+                  ))}
+                </SelectField>
+                <SelectField
+                  icon={<Languages size={13} />}
+                  title="Transcription language"
+                  className="w-[122px]"
+                  value={language}
+                  onChange={setLanguage}
+                >
+                  {languages.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </SelectField>
+                {activeModel?.status !== "installed" ? (
+                  <Button
+                    icon={<Download size={15} />}
+                    disabled={busy !== null}
+                    onClick={installModel}
+                  >
+                    {activeModel?.status === "paused" || download?.paused
+                      ? "Resume"
+                      : "Download"}
+                  </Button>
                 ) : null}
+                <span className="ctl-sep" aria-hidden />
+                <Button icon={<PanelTop size={15} />} onClick={showVoiceBar}>
+                  Voice Bar
+                </Button>
               </div>
             </div>
 
-            <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-              <Select value={modelId} onChange={setModelId}>
-                {bootstrap.models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.name.replace(/\s*\(.*\)$/, "")}
-                  </option>
-                ))}
-              </Select>
-              <Select value={language} onChange={setLanguage}>
-                {languages.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </Select>
-              <Select value={audioInputId} onChange={setAudioInputId} disabled={recording}>
-                <option value="">
-                  {defaultInput ? `Default mic - ${defaultInput.name}` : "Default mic"}
-                </option>
-                {audioInputs.map((input) => (
-                  <option key={input.id} value={input.id}>
-                    {input.name}
-                  </option>
-                ))}
-              </Select>
-              <Button
-                icon={<Download size={16} />}
-                disabled={busy !== null || activeModel?.status === "installed"}
-                onClick={installModel}
-              >
-                {activeModel?.status === "installed"
-                  ? "Installed"
-                  : activeModel?.status === "paused" || download?.paused
-                    ? "Resume"
-                    : "Download"}
-              </Button>
-              <Button icon={<PanelTop size={16} />} onClick={showVoiceBar}>
-                Voice Bar
-              </Button>
-            </div>
+            {download?.modelId === modelId ? (
+              <div className="mt-2.5 max-w-[560px]">
+                <DownloadProgress
+                  download={download}
+                  onPause={download.active ? pauseDownload : undefined}
+                />
+              </div>
+            ) : null}
           </header>
 
-          <div className="flex-1 px-6 py-6">
+          <div className="flex-1 px-5 py-5">
             {transcripts.length === 0 && !partial ? (
               <div className="flex h-full items-center justify-center text-center">
-                <div className="max-w-md">
-                  <div className="glass rim mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-[22px]">
-                    <Mic className="text-accent" size={28} />
+                <div className="max-w-sm">
+                  <div className="glass rim mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-[19px]">
+                    <Mic className="text-accent" size={24} />
                   </div>
-                  <p className="t-title text-[19px] font-semibold">
+                  <p className="t-title text-title font-semibold">
                     Start a local transcription session
                   </p>
-                  <p className="t-body mt-2 text-[13.5px] text-smoke">
-                    Saved transcripts appear here by date. Use the model and language controls
-                    before recording.
+                  <p className="t-body mt-1.5 text-ui text-smoke">
+                    Saved transcripts appear here by date. Pick a model and language above,
+                    a microphone below, then press Talk.
                   </p>
                 </div>
               </div>
             ) : (
-              <div className="mx-auto max-w-3xl space-y-3.5">
+              <div className="mx-auto max-w-3xl space-y-3">
                 {transcripts.map((transcript) => (
-                  <article key={transcript.id} className="glass rim rounded-lg p-4">
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div className="tnum t-micro text-[11.5px] text-smoke">
+                  <article key={transcript.id} className="glass rim rounded-lg p-3.5">
+                    <div className="mb-2.5 flex items-center justify-between gap-3">
+                      <div className="tnum t-micro text-meta text-smoke">
                         {new Date(transcript.created_at).toLocaleTimeString([], {
                           hour: "2-digit",
                           minute: "2-digit",
@@ -532,15 +562,15 @@ export default function Home() {
                       <div className="flex items-center gap-1">
                         <Button
                           variant="ghost"
-                          className="h-8 px-2 text-xs"
+                          size="sm"
                           title={
                             llm?.baseUrl ? "Format as Markdown" : "Configure an LLM in Settings first"
                           }
                           disabled={!llm?.baseUrl || transcript.id in formatting}
                           onClick={() => void runFormat(transcript.id, transcript.text)}
                         >
-                          <Wand2 size={14} />
-                          <span className="ml-1">
+                          <Wand2 size={13} />
+                          <span className="-ml-0.5">
                             {transcript.id in formatting
                               ? "Formatting"
                               : transcript.formatted_text
@@ -550,64 +580,91 @@ export default function Home() {
                         </Button>
                         <Button
                           variant="ghost"
-                          className="h-8 w-8 px-0"
+                          size="sm"
+                          className="w-[26px] px-0"
                           title="Copy"
                           onClick={() => copyTranscript(transcript.formatted_text || transcript.text)}
                         >
-                          <Copy size={15} />
+                          <Copy size={14} />
                         </Button>
                       </div>
                     </div>
-                    <p className="t-body whitespace-pre-wrap text-[14.5px]">{transcript.text}</p>
+                    <p className="t-body whitespace-pre-wrap text-read">{transcript.text}</p>
                     {transcript.id in formatting || transcript.formatted_text ? (
                       <div className="mt-3 border-t border-line-soft pt-3">
-                        <div className="t-micro mb-2 flex items-center gap-2 text-[11.5px] font-medium text-moss">
-                          <Wand2 size={13} />
+                        <div className="t-micro mb-1.5 flex items-center gap-1.5 text-meta font-medium text-moss">
+                          <Wand2 size={12} />
                           {transcript.id in formatting
                             ? "Formatting"
                             : `Formatted · ${transcript.formatted_preset || "typeset"}`}
                         </div>
-                        <p className="t-body whitespace-pre-wrap text-[14.5px]">
+                        <p className="t-body whitespace-pre-wrap text-read">
                           {formatting[transcript.id] ?? transcript.formatted_text}
                         </p>
                       </div>
                     ) : null}
                     {formatError[transcript.id] ? (
-                      <p className="mt-2 text-[13px] text-rust">{formatError[transcript.id]}</p>
+                      <p className="mt-2 text-ui text-rust">{formatError[transcript.id]}</p>
                     ) : null}
                   </article>
                 ))}
                 {partial ? (
-                  <article className="glass rim rounded-lg p-4 ring-1 ring-rust/25">
-                    <div className="t-micro mb-2 flex items-center gap-2 text-[11.5px] font-medium text-rust">
+                  <article className="glass rim rounded-lg p-3.5 ring-1 ring-rust/25">
+                    <div className="t-micro mb-1.5 flex items-center gap-1.5 text-meta font-medium text-rust">
                       <span className="flex h-1.5 w-1.5 rounded-pill bg-rust" />
                       Live partial
                     </div>
-                    <p className="t-body whitespace-pre-wrap text-[14.5px]">{partial}</p>
+                    <p className="t-body whitespace-pre-wrap text-read">{partial}</p>
                   </article>
                 ) : null}
               </div>
             )}
           </div>
 
-          <footer className="glass-chrome sticky bottom-0 z-20 mt-auto px-4 py-3">
-            <div className="mx-auto flex max-w-4xl flex-wrap items-center gap-3">
+          {/* Talk, the microphone it will record from, and the meter that proves
+              that microphone is live — one row, one height ladder, reading left
+              to right in the order the user acts. */}
+          <footer className="glass-chrome sticky bottom-0 z-20 mt-auto px-4 py-2.5">
+            <div className="mx-auto flex w-full max-w-4xl items-center gap-2">
               <Button
+                size="lg"
                 variant={recording ? "danger" : "primary"}
-                icon={recording ? <Square size={16} /> : <Mic size={16} />}
+                icon={recording ? <Square size={14} /> : <Mic size={15} />}
                 disabled={busy !== null && busy !== "transcribe"}
                 onClick={recording ? stopRecording : startRecording}
               >
                 {recording ? "Stop" : "Talk"}
               </Button>
+              <SelectField
+                icon={<Mic size={13} />}
+                title={
+                  defaultInput
+                    ? `Microphone · default is ${defaultInput.name}`
+                    : "Microphone"
+                }
+                className="w-[196px] shrink-0"
+                value={audioInputId}
+                onChange={setAudioInputId}
+                disabled={recording}
+              >
+                {/* The resolved device name lives in the tooltip, not in the
+                    closed control: PipeWire names run to fifty characters and no
+                    pill that fits in a footer will ever show one. */}
+                <option value="">Default microphone</option>
+                {audioInputs.map((input) => (
+                  <option key={input.id} value={input.id}>
+                    {input.name}
+                  </option>
+                ))}
+              </SelectField>
               <InputLevel level={inputLevel} active={recording} />
-              <div className="min-w-[200px] flex-1 text-[12.5px] text-smoke">
+              <p className="t-body min-w-0 flex-1 truncate text-ui text-smoke">
                 {recording
                   ? "Speak normally. The meter should move while you talk."
                   : audioInputs.length
-                    ? "Select a microphone, then press Talk."
+                    ? "Press Talk, or hold the hotkey on the voice bar."
                     : "No microphone input detected by the native audio backend."}
-              </div>
+              </p>
             </div>
           </footer>
         </div>
@@ -617,21 +674,25 @@ export default function Home() {
   );
 }
 
+/*
+  A meter, not a card. Stacking the label above the bar made this the tallest
+  thing in the footer and forced the whole strip to the meter's height; laid out
+  in one line it drops onto `--ctl-h` with the button and the select beside it,
+  and the reading stays exactly as legible.
+*/
 function InputLevel({ level, active }: { level: AudioLevelInfo; active: boolean }) {
   return (
-    <div className="glass rim flex min-w-[210px] items-center gap-3 rounded-md px-3 py-1.5">
-      <div className="flex-1">
-        <div className="t-micro mb-1 flex items-center justify-between text-[11px] text-smoke">
-          <span>Input</span>
-          <span className="tnum">{active ? formatDb(level.db) : "idle"}</span>
-        </div>
-        <div className="h-1.5 overflow-hidden rounded-pill bg-track">
-          <div
-            className="h-full rounded-pill bg-moss transition-all duration-100 ease-glass"
-            style={{ width: `${active ? level.percent : 0}%` }}
-          />
-        </div>
-      </div>
+    <div className="ctl rim flex w-[184px] shrink-0 items-center gap-2.5">
+      <span className="t-micro shrink-0 text-meta text-smoke">Input</span>
+      <span className="h-[3px] min-w-0 flex-1 overflow-hidden rounded-pill bg-track">
+        <span
+          className="block h-full rounded-pill bg-moss transition-all duration-100 ease-glass"
+          style={{ width: `${active ? level.percent : 0}%` }}
+        />
+      </span>
+      <span className="tnum t-micro w-[44px] shrink-0 text-right text-meta text-smoke">
+        {active ? formatDb(level.db) : "idle"}
+      </span>
     </div>
   );
 }
@@ -641,26 +702,44 @@ function formatDb(value: number) {
   return `${Math.round(value)} dB`;
 }
 
-function Select({
+/**
+ * A select on chrome: capsule, control-ladder height, and a leading glyph.
+ *
+ * The glyph is what a bare value cannot supply — "中文" alone does not say
+ * "language" — and it costs about 18px where a text label costs 48px, which
+ * decided whether the toolbar fitted at this window width. The wrapper is a
+ * `<label>` so the glyph is part of the hit target rather than a decoration
+ * sitting on top of it.
+ */
+function SelectField({
+  icon,
   value,
   onChange,
   children,
   disabled,
+  title,
+  className = "",
 }: {
+  icon: React.ReactNode;
   value: string;
   onChange: (value: string) => void;
   children: React.ReactNode;
   disabled?: boolean;
+  title?: string;
+  className?: string;
 }) {
   return (
-    <select
-      className="field h-9 max-w-[190px] rounded-pill pl-3.5 pr-8 text-[13px]"
-      value={value}
-      disabled={disabled}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      {children}
-    </select>
+    <label className={`select-lead ${className}`} title={title}>
+      {icon}
+      <select
+        className="field field-pill"
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {children}
+      </select>
+    </label>
   );
 }
 

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Without NSMicrophoneUsageDescription macOS does not prompt for microphone
+    access at all — it denies it silently, which is indistinguishable from a
+    broken recorder. The string is shown verbatim in the system prompt, so it
+    states where the audio actually goes.
+  -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Fun ASR transcribes your speech on this device. Audio is processed locally and is never uploaded unless you configure a cloud provider yourself.</string>
+
+  <!-- Needed to send the paste keystroke into the app you were dictating into. -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Fun ASR pastes the finished transcript into the app you were using.</string>
+</dict>
+</plist>

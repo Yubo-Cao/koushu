@@ -327,7 +327,7 @@ export default function VoiceBar() {
 
         {/* Idle is just the button and the binding, nothing more. */}
         {!expanded ? (
-          <span className="t-micro rounded-md bg-fill px-1.5 py-[3px] text-[10.5px] font-medium whitespace-nowrap text-smoke">
+          <span className="t-micro rounded-md bg-fill px-1.5 py-[3px] text-meta leading-none font-medium whitespace-nowrap text-smoke">
             {hotkey?.backend === "unavailable" ? "no hotkey" : hotkey?.trigger || "…"}
           </span>
         ) : null}
@@ -347,7 +347,7 @@ export default function VoiceBar() {
         {/* leading-none clips CJK ascenders; 1.35 keeps 中文 and Latin aligned
             on the same baseline without growing the pill. */}
         {expanded && (partial || status) ? (
-          <span className="vibrant max-w-[380px] truncate text-[12.5px] leading-[1.35] whitespace-nowrap">
+          <span className="vibrant max-w-[380px] truncate text-ui leading-[1.35] whitespace-nowrap">
             {partial || status}
           </span>
         ) : null}
@@ -365,7 +365,7 @@ export default function VoiceBar() {
 
         {expanded ? (
           <button
-            className="press flex h-5 w-5 shrink-0 items-center justify-center rounded-pill text-[13px] leading-none text-faint hover:bg-fill hover:text-ink"
+            className="press flex h-5 w-5 shrink-0 items-center justify-center rounded-pill text-ctl leading-none text-faint hover:bg-fill hover:text-ink"
             title="Hide"
             onClick={(event) => {
               event.stopPropagation();

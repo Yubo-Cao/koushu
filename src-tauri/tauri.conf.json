@@ -62,6 +62,10 @@
     ],
     "category": "Productivity",
     "shortDescription": "Fun-ASR desktop voice transcription.",
-    "longDescription": "A local desktop wrapper for Fun-ASR with microphone capture, saved transcripts, model setup, and a floating voice bar."
+    "longDescription": "A local desktop wrapper for Fun-ASR with microphone capture, saved transcripts, model setup, and a floating voice bar.",
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "infoPlist": "Info.plist"
+    }
   }
 }
