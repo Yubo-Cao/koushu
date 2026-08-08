@@ -45,19 +45,37 @@ use uuid::Uuid;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const FUNASR_CLI_BIN_NAME: &str = "llama-funasr-cli-x86_64-unknown-linux-gnu";
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const FUNASR_CLI_BIN_NAME: &str = "llama-funasr-cli-aarch64-apple-darwin";
+
+#[cfg(not(any(
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64")
+)))]
 const FUNASR_CLI_BIN_NAME: &str = "llama-funasr-cli-unsupported-platform";
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const FUNASR_SENSEVOICE_BIN_NAME: &str = "llama-funasr-sensevoice-x86_64-unknown-linux-gnu";
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const FUNASR_SENSEVOICE_BIN_NAME: &str = "llama-funasr-sensevoice-aarch64-apple-darwin";
+
+#[cfg(not(any(
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64")
+)))]
 const FUNASR_SENSEVOICE_BIN_NAME: &str = "llama-funasr-sensevoice-unsupported-platform";
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const FUNASR_VAD_BIN_NAME: &str = "llama-funasr-vad-x86_64-unknown-linux-gnu";
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const FUNASR_VAD_BIN_NAME: &str = "llama-funasr-vad-aarch64-apple-darwin";
+
+#[cfg(not(any(
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64")
+)))]
 const FUNASR_VAD_BIN_NAME: &str = "llama-funasr-vad-unsupported-platform";
 
 /// Backend id for Fun-ASR-Nano on the official llama.cpp runtime.
