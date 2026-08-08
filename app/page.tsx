@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/Button";
 import { DownloadProgress } from "@/components/DownloadProgress";
 import { SetupView } from "@/components/SetupView";
+import { DEFAULT_BACKEND } from "@/lib/backends";
 import {
   copyText,
   createSession,
@@ -96,7 +97,7 @@ export default function Home() {
   const defaultInput = audioInputs.find((input) => input.isDefault);
 
   function selectedRuntime() {
-    return activeModel?.backend || "crispasr-gguf-cpu";
+    return activeModel?.backend || DEFAULT_BACKEND;
   }
 
   async function refreshAudioInputs() {

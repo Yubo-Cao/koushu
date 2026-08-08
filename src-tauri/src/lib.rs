@@ -26,17 +26,76 @@ use uuid::Uuid;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+// Official QwenAudio/Fun-ASR llama.cpp runtime binaries (release runtime-llamacpp-v0.1.9).
+// `llama-funasr-cli` drives Fun-ASR-Nano (SAN-M encoder + Qwen3-0.6B decoder);
+// `llama-funasr-sensevoice` drives the encoder-only SenseVoiceSmall checkpoint.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const CRISPASR_BIN_NAME: &str = "crispasr-x86_64-unknown-linux-gnu";
+const FUNASR_CLI_BIN_NAME: &str = "llama-funasr-cli-x86_64-unknown-linux-gnu";
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-const CRISPASR_BIN_NAME: &str = "crispasr-unsupported-platform";
+const FUNASR_CLI_BIN_NAME: &str = "llama-funasr-cli-unsupported-platform";
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const FUNASR_SENSEVOICE_BIN_NAME: &str = "llama-funasr-sensevoice-x86_64-unknown-linux-gnu";
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+const FUNASR_SENSEVOICE_BIN_NAME: &str = "llama-funasr-sensevoice-unsupported-platform";
+
+/// Backend id for Fun-ASR-Nano on the official llama.cpp runtime.
+const BACKEND_NANO: &str = "funasr-nano-gguf-cpu";
+/// Backend id for SenseVoiceSmall on the official llama.cpp runtime.
+const BACKEND_SENSEVOICE: &str = "funasr-sensevoice-gguf-cpu";
+
+/// One file that has to be present before a GGUF model can run.
+struct GgufAsset {
+    repo_id: &'static str,
+    filename: &'static str,
+}
+
+/// Fun-ASR-Nano needs the audio encoder, the Qwen3 decoder, and the shared VAD.
+/// q4km is the default: measured on this project it is both faster and no less
+/// accurate than q8_0 (8.8x vs 7.8x realtime on a 30 s clip).
+const NANO_ASSETS: &[GgufAsset] = &[
+    GgufAsset {
+        repo_id: "FunAudioLLM/Fun-ASR-Nano-GGUF",
+        filename: "funasr-encoder-f16.gguf",
+    },
+    GgufAsset {
+        repo_id: "FunAudioLLM/Fun-ASR-Nano-GGUF",
+        filename: "qwen3-0.6b-q4km.gguf",
+    },
+    GgufAsset {
+        repo_id: "FunAudioLLM/fsmn-vad-GGUF",
+        filename: "fsmn-vad.gguf",
+    },
+];
+
+/// SenseVoiceSmall is a single encoder+CTC file, plus the same shared VAD.
+const SENSEVOICE_ASSETS: &[GgufAsset] = &[
+    GgufAsset {
+        repo_id: "FunAudioLLM/SenseVoiceSmall-GGUF",
+        filename: "sensevoice-small-q8.gguf",
+    },
+    GgufAsset {
+        repo_id: "FunAudioLLM/fsmn-vad-GGUF",
+        filename: "fsmn-vad.gguf",
+    },
+];
+
+fn gguf_assets_for(backend: &str) -> Option<&'static [GgufAsset]> {
+    match backend {
+        BACKEND_NANO => Some(NANO_ASSETS),
+        BACKEND_SENSEVOICE => Some(SENSEVOICE_ASSETS),
+        _ => None,
+    }
+}
 
 struct AppState {
     db: Mutex<Connection>,
     app_dir: PathBuf,
     python_script: PathBuf,
-    crispasr_bin: PathBuf,
+    funasr_cli_bin: PathBuf,
+    funasr_sensevoice_bin: PathBuf,
     downloads: Mutex<HashMap<String, Arc<AtomicBool>>>,
     audio_capture: Mutex<Option<AudioCaptureHandle>>,
 }
@@ -187,7 +246,8 @@ struct AsrJob {
     retain_audio: bool,
     python_script: PathBuf,
     gpu_python: PathBuf,
-    crispasr_bin: PathBuf,
+    funasr_cli_bin: PathBuf,
+    funasr_sensevoice_bin: PathBuf,
 }
 
 struct AsrJobOutput {
@@ -590,25 +650,47 @@ fn send_download_event(channel: &Channel<ModelDownloadEvent>, event: ModelDownlo
     let _ = channel.send(event);
 }
 
-fn download_gguf_model(
-    model: &ModelInfo,
+fn asset_url(asset: &GgufAsset) -> String {
+    format!(
+        "https://huggingface.co/{}/resolve/main/{}",
+        asset.repo_id, asset.filename
+    )
+}
+
+/// Ask Hugging Face how big an asset is so the UI can show a real total across
+/// all files before the first byte lands. A failure here is not fatal: the
+/// download still works, the progress bar just runs without a known total.
+fn probe_asset_size(client: &reqwest::blocking::Client, url: &str) -> Option<u64> {
+    let response = client.head(url).send().ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    response
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .or_else(|| response.content_length())
+}
+
+/// Fetch one asset into `dir`, resuming a partial `.download` file when possible.
+/// `already_done` is the number of bytes counted for previously finished assets;
+/// progress events are reported against the whole model, not this single file.
+fn download_one_asset(
+    client: &reqwest::blocking::Client,
+    model_id: &str,
+    asset: &GgufAsset,
+    dir: &Path,
+    already_done: u64,
+    total_bytes: Option<u64>,
     cancel: &AtomicBool,
     on_event: &Channel<ModelDownloadEvent>,
 ) -> Result<DownloadResult, String> {
-    let destination = Path::new(&model.local_path);
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-    }
-
-    let url = format!(
-        "https://huggingface.co/{}/resolve/main/{}",
-        model.repo_id, "funasr-nano-2512-q4_k.gguf"
-    );
+    let destination = dir.join(asset.filename);
+    let url = asset_url(asset);
     let tmp_path = destination.with_extension("gguf.download");
     let mut existing_bytes = fs::metadata(&tmp_path).map(|meta| meta.len()).unwrap_or(0);
-    let client = reqwest::blocking::Client::builder()
-        .build()
-        .map_err(|err| err.to_string())?;
+
     let mut request = client.get(&url);
     if existing_bytes > 0 {
         request = request.header(RANGE, format!("bytes={existing_bytes}-"));
@@ -626,26 +708,9 @@ fn download_gguf_model(
             response.status()
         ));
     }
-
     if existing_bytes > 0 && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
         existing_bytes = 0;
     }
-
-    let response_len = response
-        .headers()
-        .get(CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        .or_else(|| response.content_length());
-    let total_bytes = response_len.map(|len| len + existing_bytes);
-    send_download_event(
-        on_event,
-        ModelDownloadEvent::Started {
-            model_id: model.id.clone(),
-            downloaded_bytes: existing_bytes,
-            total_bytes,
-        },
-    );
 
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -655,7 +720,7 @@ fn download_gguf_model(
         .open(&tmp_path)
         .map_err(|err| err.to_string())?;
 
-    let mut downloaded_bytes = existing_bytes;
+    let mut file_bytes = existing_bytes;
     let mut buffer = [0_u8; 128 * 1024];
     loop {
         if cancel.load(Ordering::SeqCst) {
@@ -663,12 +728,14 @@ fn download_gguf_model(
             send_download_event(
                 on_event,
                 ModelDownloadEvent::Paused {
-                    model_id: model.id.clone(),
-                    downloaded_bytes,
+                    model_id: model_id.to_string(),
+                    downloaded_bytes: already_done + file_bytes,
                     total_bytes,
                 },
             );
-            return Ok(DownloadResult::Paused { downloaded_bytes });
+            return Ok(DownloadResult::Paused {
+                downloaded_bytes: already_done + file_bytes,
+            });
         }
 
         let read = response.read(&mut buffer).map_err(|err| err.to_string())?;
@@ -678,21 +745,89 @@ fn download_gguf_model(
 
         file.write_all(&buffer[..read])
             .map_err(|err| err.to_string())?;
-        downloaded_bytes += read as u64;
+        file_bytes += read as u64;
         send_download_event(
             on_event,
             ModelDownloadEvent::Progress {
-                model_id: model.id.clone(),
+                model_id: model_id.to_string(),
                 chunk_bytes: read as u64,
-                downloaded_bytes,
+                downloaded_bytes: already_done + file_bytes,
                 total_bytes,
             },
         );
     }
 
     file.flush().map_err(|err| err.to_string())?;
-    fs::rename(&tmp_path, destination).map_err(|err| err.to_string())?;
-    Ok(DownloadResult::Installed(downloaded_bytes))
+    fs::rename(&tmp_path, &destination).map_err(|err| err.to_string())?;
+    Ok(DownloadResult::Installed(file_bytes))
+}
+
+/// Download every GGUF file a model needs into its directory.
+///
+/// Unlike the previous single-file runtime, the official Fun-ASR-Nano CLI needs
+/// three separate files (audio encoder, Qwen3 decoder, shared FSMN-VAD) pulled
+/// from two different Hugging Face repos, so `local_path` is a directory.
+fn download_gguf_model(
+    model: &ModelInfo,
+    cancel: &AtomicBool,
+    on_event: &Channel<ModelDownloadEvent>,
+) -> Result<DownloadResult, String> {
+    let assets = gguf_assets_for(&model.backend)
+        .ok_or_else(|| format!("No GGUF asset list for backend {}", model.backend))?;
+    let dir = Path::new(&model.local_path);
+    fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+
+    let client = reqwest::blocking::Client::builder()
+        .build()
+        .map_err(|err| err.to_string())?;
+
+    // Size every asset up front so the progress bar has a real denominator.
+    // Files already on disk at full size count as done and are skipped below.
+    let mut sizes: Vec<Option<u64>> = Vec::with_capacity(assets.len());
+    for asset in assets {
+        sizes.push(probe_asset_size(&client, &asset_url(asset)));
+    }
+    let total_bytes = if sizes.iter().all(|size| size.is_some()) {
+        Some(sizes.iter().map(|size| size.unwrap_or(0)).sum())
+    } else {
+        None
+    };
+
+    let mut done_bytes = 0_u64;
+    for (index, asset) in assets.iter().enumerate() {
+        let destination = dir.join(asset.filename);
+        if let (Ok(meta), Some(expected)) = (fs::metadata(&destination), sizes[index]) {
+            if meta.len() == expected {
+                done_bytes += expected;
+                continue;
+            }
+        }
+
+        send_download_event(
+            on_event,
+            ModelDownloadEvent::Started {
+                model_id: model.id.clone(),
+                downloaded_bytes: done_bytes,
+                total_bytes,
+            },
+        );
+
+        match download_one_asset(
+            &client,
+            &model.id,
+            asset,
+            dir,
+            done_bytes,
+            total_bytes,
+            cancel,
+            on_event,
+        )? {
+            DownloadResult::Installed(bytes) => done_bytes += bytes,
+            paused @ DownloadResult::Paused { .. } => return Ok(paused),
+        }
+    }
+
+    Ok(DownloadResult::Installed(done_bytes))
 }
 
 fn download_python_model(
@@ -773,7 +908,7 @@ fn download_model_with_progress(
 
     set_model_status(&state, &model_id, "downloading", None, None)?;
 
-    let result = if model.backend == "crispasr-gguf-cpu" {
+    let result = if gguf_assets_for(&model.backend).is_some() {
         download_gguf_model(&model, &cancel, &on_event)
     } else {
         download_python_model(&state, &model, &on_event)
@@ -831,40 +966,100 @@ fn download_model_with_progress(
     response
 }
 
-fn transcribe_with_crispasr(
-    crispasr_bin: &Path,
+/// Check that every GGUF file a backend needs is on disk, and return the model dir.
+fn gguf_model_dir(model: &ModelInfo) -> Result<PathBuf, String> {
+    let assets = gguf_assets_for(&model.backend)
+        .ok_or_else(|| format!("No GGUF asset list for backend {}", model.backend))?;
+    let dir = PathBuf::from(&model.local_path);
+    for asset in assets {
+        if !dir.join(asset.filename).exists() {
+            return Err(format!(
+                "{} is missing from {}. Download the model again from the welcome or settings screen.",
+                asset.filename,
+                dir.display()
+            ));
+        }
+    }
+    Ok(dir)
+}
+
+/// Both official runtimes keep stdout clean: every log, timing and VAD line goes
+/// to stderr, and stdout carries only transcript text (verified against
+/// runtime-llamacpp-v0.1.9). One line per VAD segment, so join them.
+///
+/// Deliberately no content-based filtering here — a transcript may legitimately
+/// begin with any character, and dropping lines by prefix would silently eat it.
+fn clean_runtime_stdout(stdout: &[u8]) -> String {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Fun-ASR-Nano through the official `llama-funasr-cli`: SAN-M encoder GGUF +
+/// Qwen3-0.6B decoder GGUF, with the built-in ggml FSMN-VAD doing segmentation.
+///
+/// The official CLI has no `--language` flag — Nano detects language itself.
+fn transcribe_with_funasr_nano(
+    cli_bin: &Path,
     model: &ModelInfo,
     audio_path: &Path,
-    language: &str,
 ) -> Result<(String, String), String> {
-    let model_path = Path::new(&model.local_path);
-    if !model_path.exists() {
-        return Err("Model is not downloaded yet. Download Fun-ASR-Nano from the welcome or settings screen.".to_string());
-    }
-    if !crispasr_bin.exists() {
-        return Err("Bundled CrispASR runtime is missing from the app resources.".to_string());
+    let dir = gguf_model_dir(model)?;
+    if !cli_bin.exists() {
+        return Err("Bundled Fun-ASR runtime is missing from the app resources.".to_string());
     }
 
-    let mut command = low_priority_command(crispasr_bin);
+    let mut command = low_priority_command(cli_bin);
     let output = command
-        .arg("--backend")
-        .arg("funasr")
-        .arg("--no-gpu")
-        .arg("--no-prints")
-        .arg("--no-timestamps")
-        .arg("--language")
-        .arg(crispasr_language(language))
-        .arg("--model")
-        .arg(model_path)
-        .arg("--file")
+        .arg("--enc")
+        .arg(dir.join("funasr-encoder-f16.gguf"))
+        .arg("-m")
+        .arg(dir.join("qwen3-0.6b-q4km.gguf"))
+        .arg("-a")
         .arg(audio_path)
+        .arg("--vad")
+        .arg(dir.join("fsmn-vad.gguf"))
+        .output()
+        .map_err(|err| err.to_string())?;
+
+    if output.status.success() {
+        Ok((clean_runtime_stdout(&output.stdout), BACKEND_NANO.to_string()))
+    } else {
+        Err(compact_process_error(&output.stdout, &output.stderr))
+    }
+}
+
+/// SenseVoiceSmall through the official `llama-funasr-sensevoice`: a single
+/// encoder+CTC pass, ~20x realtime on CPU. Faster than Nano but weaker on
+/// English, so it is the explicit "go fast" choice rather than the default.
+fn transcribe_with_sensevoice(
+    sensevoice_bin: &Path,
+    model: &ModelInfo,
+    audio_path: &Path,
+) -> Result<(String, String), String> {
+    let dir = gguf_model_dir(model)?;
+    if !sensevoice_bin.exists() {
+        return Err("Bundled SenseVoice runtime is missing from the app resources.".to_string());
+    }
+
+    let mut command = low_priority_command(sensevoice_bin);
+    let output = command
+        .arg("-m")
+        .arg(dir.join("sensevoice-small-q8.gguf"))
+        .arg("-a")
+        .arg(audio_path)
+        .arg("--vad")
+        .arg(dir.join("fsmn-vad.gguf"))
         .output()
         .map_err(|err| err.to_string())?;
 
     if output.status.success() {
         Ok((
-            String::from_utf8_lossy(&output.stdout).trim().to_string(),
-            "crispasr-gguf-cpu".to_string(),
+            clean_runtime_stdout(&output.stdout),
+            BACKEND_SENSEVOICE.to_string(),
         ))
     } else {
         Err(compact_process_error(&output.stdout, &output.stderr))
@@ -969,17 +1164,6 @@ fn transcribe_with_vllm(
     }
 }
 
-fn crispasr_language(language: &str) -> &'static str {
-    match language {
-        "中文" => "zh",
-        "English" => "en",
-        "日本語" => "ja",
-        "粤语" => "yue",
-        "한국어" => "ko",
-        _ => "auto",
-    }
-}
-
 #[tauri::command]
 async fn transcribe_audio(
     state: tauri::State<'_, AppState>,
@@ -1014,7 +1198,7 @@ fn prepare_asr_job(
                     Some("Voice note".to_string()),
                     &request.model_id,
                     &request.language,
-                    "crispasr-gguf-cpu",
+                    BACKEND_NANO,
                 )?
                 .id
             } else {
@@ -1042,18 +1226,19 @@ fn prepare_asr_job(
         retain_audio: setting_bool(state, "audio.retain").unwrap_or(false),
         python_script: state.python_script.clone(),
         gpu_python: gpu_python_bin(&state.app_dir),
-        crispasr_bin: state.crispasr_bin.clone(),
+        funasr_cli_bin: state.funasr_cli_bin.clone(),
+        funasr_sensevoice_bin: state.funasr_sensevoice_bin.clone(),
     })
 }
 
 fn run_asr_job(job: AsrJob) -> AsrJobOutput {
     let transcription = match job.model.backend.as_str() {
-        "crispasr-gguf-cpu" => transcribe_with_crispasr(
-            &job.crispasr_bin,
-            &job.model,
-            &job.audio_path,
-            &job.language,
-        ),
+        BACKEND_NANO => {
+            transcribe_with_funasr_nano(&job.funasr_cli_bin, &job.model, &job.audio_path)
+        }
+        BACKEND_SENSEVOICE => {
+            transcribe_with_sensevoice(&job.funasr_sensevoice_bin, &job.model, &job.audio_path)
+        }
         "funasr-vllm-gpu" => transcribe_with_vllm(
             &job.gpu_python,
             &job.python_script,
@@ -1240,23 +1425,27 @@ pub fn run() {
                 .unwrap_or_else(|| {
                     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/funasr_worker.py")
                 });
-            let crispasr_bin = app
-                .path()
-                .resource_dir()
-                .ok()
-                .map(|dir| dir.join("binaries").join(CRISPASR_BIN_NAME))
-                .filter(|path| path.exists())
-                .unwrap_or_else(|| {
-                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("binaries")
-                        .join(CRISPASR_BIN_NAME)
-                });
+            let resolve_bundled_bin = |name: &str| {
+                app.path()
+                    .resource_dir()
+                    .ok()
+                    .map(|dir| dir.join("binaries").join(name))
+                    .filter(|path| path.exists())
+                    .unwrap_or_else(|| {
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("binaries")
+                            .join(name)
+                    })
+            };
+            let funasr_cli_bin = resolve_bundled_bin(FUNASR_CLI_BIN_NAME);
+            let funasr_sensevoice_bin = resolve_bundled_bin(FUNASR_SENSEVOICE_BIN_NAME);
 
             app.manage(AppState {
                 db: Mutex::new(db),
                 app_dir,
                 python_script,
-                crispasr_bin,
+                funasr_cli_bin,
+                funasr_sensevoice_bin,
                 downloads: Mutex::new(HashMap::new()),
                 audio_capture: Mutex::new(None),
             });
@@ -1376,78 +1565,58 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
         "#,
     )?;
 
-    let default_model_path = app_dir
-        .join("models")
-        .join("fun-asr-nano-2512")
-        .join("funasr-nano-2512-q4_k.gguf")
-        .to_string_lossy()
-        .to_string();
-    let vllm_model_path = app_dir
-        .join("models")
-        .join("fun-asr-nano-2512-vllm")
-        .to_string_lossy()
-        .to_string();
-    conn.execute(
-        r#"
-        INSERT INTO models
-        (id, name, backend, source, repo_id, local_path, status, size_bytes, installed_at, last_error)
-        VALUES
-        (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, NULL)
-        ON CONFLICT(id) DO UPDATE SET
-            name = excluded.name,
-            backend = excluded.backend,
-            source = excluded.source,
-            repo_id = excluded.repo_id,
-            local_path = excluded.local_path,
-            status = CASE
-                WHEN models.status = 'installed' AND NOT EXISTS(SELECT 1 WHERE excluded.local_path = models.local_path)
-                THEN 'available'
-                ELSE models.status
-            END,
-            last_error = NULL
-        "#,
-        params![
+    // Both models run on the official llama.cpp CPU runtime. `local_path` is a
+    // directory now, not a single file, because each model is several GGUFs.
+    let catalog: [(&str, &str, &str, &str); 2] = [
+        (
             "fun-asr-nano-2512",
-            "Fun-ASR-Nano GGUF Q4_K",
-            "crispasr-gguf-cpu",
-            "huggingface",
-            "cstr/funasr-nano-GGUF",
-            default_model_path,
-            "available"
-        ],
-    )?;
-    conn.execute(
-        r#"
-        INSERT INTO models
-        (id, name, backend, source, repo_id, local_path, status, size_bytes, installed_at, last_error)
-        VALUES
-        (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, NULL)
-        ON CONFLICT(id) DO UPDATE SET
-            name = excluded.name,
-            backend = excluded.backend,
-            source = excluded.source,
-            repo_id = excluded.repo_id,
-            local_path = excluded.local_path,
-            status = CASE
-                WHEN models.status = 'installed' AND NOT EXISTS(SELECT 1 WHERE excluded.local_path = models.local_path)
-                THEN 'available'
-                ELSE models.status
-            END,
-            last_error = NULL
-        "#,
-        params![
-            "fun-asr-nano-2512-vllm",
-            "Fun-ASR-Nano vLLM GPU",
-            "funasr-vllm-gpu",
-            "huggingface",
-            "FunAudioLLM/Fun-ASR-Nano-2512",
-            vllm_model_path,
-            "available"
-        ],
-    )?;
+            "Fun-ASR-Nano (accurate)",
+            BACKEND_NANO,
+            "FunAudioLLM/Fun-ASR-Nano-GGUF",
+        ),
+        (
+            "sensevoice-small",
+            "SenseVoiceSmall (fast)",
+            BACKEND_SENSEVOICE,
+            "FunAudioLLM/SenseVoiceSmall-GGUF",
+        ),
+    ];
+    for (id, name, backend, repo_id) in catalog {
+        let local_path = app_dir
+            .join("models")
+            .join(id)
+            .to_string_lossy()
+            .to_string();
+        conn.execute(
+            r#"
+            INSERT INTO models
+            (id, name, backend, source, repo_id, local_path, status, size_bytes, installed_at, last_error)
+            VALUES
+            (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, NULL)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                backend = excluded.backend,
+                source = excluded.source,
+                repo_id = excluded.repo_id,
+                local_path = excluded.local_path,
+                -- A changed backend or path means the old artifacts no longer
+                -- satisfy this entry, so force a re-download.
+                status = CASE
+                    WHEN models.backend = excluded.backend
+                     AND models.local_path = excluded.local_path
+                    THEN models.status
+                    ELSE 'available'
+                END,
+                last_error = NULL
+            "#,
+            params![id, name, backend, "huggingface", repo_id, local_path, "available"],
+        )?;
+    }
 
+    // Retired entries: the Python-only build, and the vLLM GPU path (dropped in
+    // favour of CPU-only; it cannot fit alongside a desktop on an 8 GB GPU).
     conn.execute(
-        "DELETE FROM models WHERE id = 'fun-asr-nano-2512-python'",
+        "DELETE FROM models WHERE id IN ('fun-asr-nano-2512-python', 'fun-asr-nano-2512-vllm')",
         [],
     )?;
 
@@ -1455,7 +1624,7 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
         ("setup.complete", "false"),
         ("defaults.model", "fun-asr-nano-2512"),
         ("defaults.language", "中文"),
-        ("defaults.runtime", "crispasr-gguf-cpu"),
+        ("defaults.runtime", BACKEND_NANO),
         ("audio.retain", "false"),
         ("floating.autoPaste", "true"),
     ];
@@ -1465,12 +1634,15 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
             params![key, value],
         )?;
     }
+    // Migrate anyone pinned to a runtime or model that no longer exists.
     conn.execute(
-        "UPDATE settings SET value = 'crispasr-gguf-cpu' WHERE key = 'defaults.runtime' AND value = 'python-hf-cpu'",
-        [],
+        "UPDATE settings SET value = ?1 WHERE key = 'defaults.runtime'
+           AND value IN ('python-hf-cpu', 'crispasr-gguf-cpu', 'funasr-vllm-gpu')",
+        params![BACKEND_NANO],
     )?;
     conn.execute(
-        "UPDATE settings SET value = 'fun-asr-nano-2512' WHERE key = 'defaults.model' AND value = 'fun-asr-nano-2512-python'",
+        "UPDATE settings SET value = 'fun-asr-nano-2512' WHERE key = 'defaults.model'
+           AND value IN ('fun-asr-nano-2512-python', 'fun-asr-nano-2512-vllm')",
         [],
     )?;
 
@@ -2512,7 +2684,7 @@ fn platform_info(state: &AppState) -> PlatformInfo {
         x11_display: env::var("DISPLAY").is_ok(),
         paste_tools: tools,
         python: python_bin(),
-        bundled_asr: state.crispasr_bin.exists(),
+        bundled_asr: state.funasr_cli_bin.exists() && state.funasr_sensevoice_bin.exists(),
     }
 }
 

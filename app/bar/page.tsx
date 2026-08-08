@@ -3,6 +3,7 @@
 import { ClipboardCheck, GripHorizontal, Mic, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/Button";
+import { DEFAULT_BACKEND } from "@/lib/backends";
 import {
   autoPasteText,
   createSession,
@@ -59,7 +60,7 @@ export default function VoiceBar() {
         title: `Voice Bar ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
         model: "fun-asr-nano-2512",
         language: "中文",
-        runtime: "crispasr-gguf-cpu",
+        runtime: DEFAULT_BACKEND,
       });
       await startAudioCapture(audioInputId || undefined);
       sessionIdRef.current = session.id;

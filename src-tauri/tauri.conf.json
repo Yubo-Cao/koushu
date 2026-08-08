@@ -49,7 +49,7 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "externalBin": ["binaries/crispasr"],
+    "externalBin": ["binaries/llama-funasr-cli", "binaries/llama-funasr-sensevoice"],
     "resources": ["python/*", "binaries/*"],
     "category": "Productivity",
     "shortDescription": "Fun-ASR desktop voice transcription.",

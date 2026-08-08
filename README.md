@@ -7,7 +7,7 @@ Linux-first Tauri wrapper for Fun-ASR with a Next.js + Tailwind CSS v4 frontend.
 - Tauri v2 desktop shell with main, settings, and floating voice-bar windows.
 - Bun-managed Next.js static export frontend.
 - Local SQLite persistence for settings, models, sessions, transcripts, segments, and FTS.
-- Bundled Linux x86_64 CPU CrispASR runtime for Fun-ASR GGUF inference.
+- Bundled official Fun-ASR llama.cpp CPU runtime (`llama-funasr-cli` + `llama-funasr-sensevoice`, release `runtime-llamacpp-v0.1.9`), with Fun-ASR-Nano and SenseVoiceSmall selectable per transcription.
 - Native Linux microphone capture through Tauri/Rust, with bounded rolling-window partial previews to avoid UI stalls.
 - Hugging Face model management for `cstr/funasr-nano-GGUF` Q4_K.
 - Optional GPU vLLM inference path for `FunAudioLLM/Fun-ASR-Nano-2512` through the Python bridge.

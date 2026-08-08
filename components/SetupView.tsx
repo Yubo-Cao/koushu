@@ -118,7 +118,7 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
             </p>
 
             <div className="mt-8 grid max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2">
-              <Feature icon={<Cpu size={18} />} title="CPU-first ASR" text="Bundles a local CrispASR C++ runtime for Fun-ASR GGUF models." />
+              <Feature icon={<Cpu size={18} />} title="CPU-only ASR" text="Bundles the official Fun-ASR llama.cpp runtime. No GPU, no Python, no CUDA." />
               <Feature icon={<Download size={18} />} title="Hugging Face models" text="Downloads Fun-ASR-Nano Q4_K on first setup." />
               <Feature icon={<Database size={18} />} title="Local transcripts" text="Saves sessions by date in local SQLite." />
               <Feature icon={<Shield size={18} />} title="Private by default" text="No cloud service is needed for transcription." />

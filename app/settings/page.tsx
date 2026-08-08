@@ -4,6 +4,7 @@ import { Cpu, Download, HardDrive, RefreshCw, RotateCcw, Save } from "lucide-rea
 import { useEffect, useState } from "react";
 import { Button } from "@/components/Button";
 import { DownloadProgress } from "@/components/DownloadProgress";
+import { DEFAULT_BACKEND, backendLabel } from "@/lib/backends";
 import { formatBytes } from "@/lib/format";
 import {
   downloadModelWithProgress,
@@ -166,7 +167,7 @@ export default function SettingsPage() {
       const selectedModel = bootstrap?.models.find((model) => model.id === defaultModel);
       await setSetting("defaults.model", defaultModel);
       await setSetting("defaults.language", defaultLanguage);
-      await setSetting("defaults.runtime", selectedModel?.backend || "crispasr-gguf-cpu");
+      await setSetting("defaults.runtime", selectedModel?.backend || DEFAULT_BACKEND);
       await setSetting("audio.retain", retainAudio ? "true" : "false");
       await setSetting("floating.autoPaste", autoPaste ? "true" : "false");
       setMessage("Settings saved.");
@@ -273,7 +274,9 @@ export default function SettingsPage() {
               </label>
               <Info
                 label="Runtime"
-                value={bootstrap.models.find((model) => model.id === defaultModel)?.backend || "crispasr-gguf-cpu"}
+                value={backendLabel(
+                  bootstrap.models.find((model) => model.id === defaultModel)?.backend || DEFAULT_BACKEND,
+                )}
               />
             </div>
           </Panel>
