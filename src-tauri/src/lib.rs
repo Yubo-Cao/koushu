@@ -1,4 +1,5 @@
 pub mod hotkey;
+pub mod llm;
 mod panel;
 
 /// Test hook for `examples/ptt_probe.rs`: start a listener and hand back the
@@ -261,6 +262,9 @@ struct TranscriptInfo {
     duration_ms: Option<i64>,
     model: String,
     language: String,
+    formatted_text: Option<String>,
+    formatted_preset: Option<String>,
+    formatted_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -847,6 +851,187 @@ fn start_streaming_transcription(
         join: Some(join),
     });
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// LLM formatting
+//
+// The second layer of the two-layer flow: the raw transcript lands first and
+// is never modified, then this produces a Markdown-typeset version alongside
+// it. Both are stored, so the user can always fall back to their own words.
+// ---------------------------------------------------------------------------
+
+/// Service name under which the API key is stored in the OS credential store.
+const LLM_KEYRING_SERVICE: &str = "dev.yubo.fun-asr-desktop";
+const LLM_KEYRING_USER: &str = "llm-api-key";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "event",
+    content = "data"
+)]
+enum FormatEvent {
+    Delta { text: String },
+    Done { text: String },
+    Error { error: String },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PresetInfo {
+    id: String,
+    label: String,
+    description: String,
+    prompt: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmSettings {
+    base_url: String,
+    model: String,
+    /// Never the key itself — only whether one is stored.
+    has_api_key: bool,
+    preset: String,
+    auto_format: bool,
+    presets: Vec<PresetInfo>,
+}
+
+fn keyring_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(LLM_KEYRING_SERVICE, LLM_KEYRING_USER).map_err(|err| err.to_string())
+}
+
+fn stored_api_key() -> Option<String> {
+    keyring_entry()
+        .ok()
+        .and_then(|entry| entry.get_password().ok())
+        .filter(|key| !key.trim().is_empty())
+}
+
+#[tauri::command]
+fn get_llm_settings(state: tauri::State<'_, AppState>) -> Result<LlmSettings, String> {
+    let preset = setting_value(&state, "llm.preset")?
+        .unwrap_or_else(|| llm::presets::DEFAULT_ID.to_string());
+    Ok(LlmSettings {
+        base_url: setting_value(&state, "llm.baseUrl")?.unwrap_or_default(),
+        model: setting_value(&state, "llm.model")?.unwrap_or_default(),
+        has_api_key: stored_api_key().is_some(),
+        preset,
+        auto_format: setting_bool(&state, "llm.autoFormat").unwrap_or(false),
+        presets: llm::presets::ALL
+            .iter()
+            .map(|preset| PresetInfo {
+                id: preset.id.to_string(),
+                label: preset.label.to_string(),
+                description: preset.description.to_string(),
+                // The stored override, when the user has edited this preset.
+                prompt: setting_value(&state, &format!("llm.prompt.{}", preset.id))
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| preset.prompt.to_string()),
+            })
+            .collect(),
+    })
+}
+
+/// Store or clear the API key. Passing `None` removes it.
+///
+/// The key goes to the OS credential store rather than the settings table:
+/// the SQLite file sits in app data in the clear, and a leaked transcript
+/// database should not also leak the user's API credentials.
+#[tauri::command]
+fn set_llm_api_key(key: Option<String>) -> Result<(), String> {
+    let entry = keyring_entry()?;
+    match key.filter(|value| !value.trim().is_empty()) {
+        Some(value) => entry
+            .set_password(value.trim())
+            .map_err(|err| format!("Could not save the API key: {err}")),
+        None => match entry.delete_credential() {
+            Ok(()) => Ok(()),
+            // Clearing an already-absent key is success, not an error.
+            Err(keyring::Error::NoEntry) => Ok(()),
+            Err(err) => Err(format!("Could not clear the API key: {err}")),
+        },
+    }
+}
+
+fn resolve_prompt(state: &AppState, preset_id: &str) -> Result<String, String> {
+    let preset = llm::presets::by_id(preset_id)
+        .ok_or_else(|| format!("Unknown formatting preset '{preset_id}'."))?;
+    Ok(
+        setting_value(state, &format!("llm.prompt.{}", preset.id))?
+            .filter(|prompt| !prompt.trim().is_empty())
+            .unwrap_or_else(|| preset.prompt.to_string()),
+    )
+}
+
+#[tauri::command]
+async fn format_transcript(
+    state: tauri::State<'_, AppState>,
+    transcript_id: Option<String>,
+    text: String,
+    preset: Option<String>,
+    on_event: Channel<FormatEvent>,
+) -> Result<String, String> {
+    if text.trim().is_empty() {
+        return Err("Nothing to format.".to_string());
+    }
+    let preset_id = preset.unwrap_or(
+        setting_value(&state, "llm.preset")?
+            .unwrap_or_else(|| llm::presets::DEFAULT_ID.to_string()),
+    );
+    let config = llm::LlmConfig {
+        base_url: setting_value(&state, "llm.baseUrl")?.unwrap_or_default(),
+        model: setting_value(&state, "llm.model")?.unwrap_or_default(),
+        api_key: stored_api_key().unwrap_or_default(),
+        temperature: None,
+    };
+    let prompt = resolve_prompt(&state, &preset_id)?;
+
+    let events = on_event.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        llm::format_streaming(
+            &config,
+            &prompt,
+            &text,
+            |delta| {
+                let _ = events.send(FormatEvent::Delta {
+                    text: delta.to_string(),
+                });
+            },
+            || false,
+        )
+    })
+    .await
+    .map_err(|err| format!("Formatting worker failed to join: {err}"))?;
+
+    match result {
+        Ok(formatted) => {
+            if let Some(id) = transcript_id {
+                let conn = state
+                    .db
+                    .lock()
+                    .map_err(|_| "Database lock poisoned".to_string())?;
+                conn.execute(
+                    "UPDATE transcripts
+                       SET formatted_text = ?1, formatted_preset = ?2, formatted_at = ?3
+                     WHERE id = ?4",
+                    params![formatted, preset_id, Local::now().to_rfc3339(), id],
+                )
+                .map_err(|err| err.to_string())?;
+            }
+            let _ = on_event.send(FormatEvent::Done {
+                text: formatted.clone(),
+            });
+            Ok(formatted)
+        }
+        Err(err) => {
+            let _ = on_event.send(FormatEvent::Error { error: err.clone() });
+            Err(err)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1714,6 +1899,9 @@ pub fn run() {
             stop_streaming_transcription,
             start_push_to_talk,
             stop_push_to_talk,
+            get_llm_settings,
+            set_llm_api_key,
+            format_transcript,
             get_bootstrap,
             complete_onboarding,
             reset_onboarding,
@@ -1788,6 +1976,9 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
             FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
         );
 
+        -- formatted_text holds the LLM-typeset Markdown for this transcript.
+        -- The raw `text` is never overwritten: the user dictated it, and the
+        -- formatted version is a derived view they can discard or regenerate.
         CREATE TABLE IF NOT EXISTS segments (
             id TEXT PRIMARY KEY,
             transcript_id TEXT NOT NULL,
@@ -1820,6 +2011,24 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
         END;
         "#,
     )?;
+
+    // Two-layer transcripts: raw ASR text plus an optional LLM-formatted
+    // version. Added after the initial schema, so applied as a migration.
+    for (column, decl) in [
+        ("formatted_text", "TEXT"),
+        ("formatted_preset", "TEXT"),
+        ("formatted_at", "TEXT"),
+    ] {
+        let exists: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('transcripts') WHERE name = ?1")?
+            .exists(params![column])?;
+        if !exists {
+            conn.execute(
+                &format!("ALTER TABLE transcripts ADD COLUMN {column} {decl}"),
+                [],
+            )?;
+        }
+    }
 
     // Both models run on the official llama.cpp CPU runtime. `local_path` is a
     // directory now, not a single file, because each model is several GGUFs.
@@ -1924,6 +2133,23 @@ fn load_settings_json(state: &AppState) -> Result<serde_json::Value, String> {
         map.insert(key, serde_json::Value::String(value));
     }
     Ok(serde_json::Value::Object(map))
+}
+
+/// Read a settings value, treating blank as absent.
+fn setting_value(state: &AppState, key: &str) -> Result<Option<String>, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| "Database lock poisoned".to_string())?;
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| err.to_string())?;
+    Ok(value.filter(|value| !value.trim().is_empty()))
 }
 
 fn setting_bool(state: &AppState, key: &str) -> Result<bool, String> {
@@ -2159,6 +2385,10 @@ fn insert_transcript_inner(
         duration_ms,
         model: model.to_string(),
         language: language.to_string(),
+        // Formatting happens later, asynchronously, if at all.
+        formatted_text: None,
+        formatted_preset: None,
+        formatted_at: None,
     };
 
     let conn = state
@@ -2198,7 +2428,8 @@ fn list_transcripts_inner(
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, session_id, text, status, source, created_at, duration_ms, model, language
+            SELECT id, session_id, text, status, source, created_at, duration_ms, model, language,
+                   formatted_text, formatted_preset, formatted_at
             FROM transcripts
             WHERE session_id = ?1
             ORDER BY created_at ASC
@@ -2224,6 +2455,9 @@ fn map_transcript(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptInfo> {
         duration_ms: row.get(6)?,
         model: row.get(7)?,
         language: row.get(8)?,
+        formatted_text: row.get(9)?,
+        formatted_preset: row.get(10)?,
+        formatted_at: row.get(11)?,
     })
 }
 
