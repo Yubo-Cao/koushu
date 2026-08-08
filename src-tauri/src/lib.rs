@@ -1,5 +1,6 @@
 pub mod asr_cloud;
 pub mod hotkey;
+pub mod license;
 pub mod llm;
 mod panel;
 
@@ -943,9 +944,41 @@ fn record_trial_usage(state: &AppState, speech_seconds: f64) -> Result<TrialStat
     Ok(TrialStatus {
         used_seconds: total,
         limit_seconds: TRIAL_LIMIT_SECONDS,
-        licensed: setting_value(state, "trial.licenseKey")?.is_some(),
+        licensed: setting_value(state, "trial.licenseKey")?
+            .map(|key| license::verify(&key).valid)
+            .unwrap_or(false),
         first_transcript: first,
     })
+}
+
+/// Store a licence after verifying it. Rejected keys are never persisted, so
+/// the app cannot end up in a state where it believes it is licensed.
+#[tauri::command]
+fn activate_license(
+    state: tauri::State<'_, AppState>,
+    key: String,
+) -> Result<license::LicenseInfo, String> {
+    let info = license::verify(&key);
+    if info.valid {
+        set_setting_inner(&state, "trial.licenseKey", key.trim())?;
+    }
+    Ok(info)
+}
+
+#[tauri::command]
+fn get_license(state: tauri::State<'_, AppState>) -> Result<license::LicenseInfo, String> {
+    match setting_value(&state, "trial.licenseKey")? {
+        // Re-verified on every read rather than trusting a stored "activated"
+        // flag: a flag can be flipped in the database, a signature cannot be
+        // forged without the private key.
+        Some(key) => Ok(license::verify(&key)),
+        None => Ok(license::LicenseInfo {
+            valid: false,
+            email: None,
+            issued: None,
+            detail: "No licence installed.".to_string(),
+        }),
+    }
 }
 
 #[tauri::command]
@@ -955,7 +988,9 @@ fn get_trial_status(state: tauri::State<'_, AppState>) -> Result<TrialStatus, St
             .and_then(|value| value.parse::<f64>().ok())
             .unwrap_or(0.0),
         limit_seconds: TRIAL_LIMIT_SECONDS,
-        licensed: setting_value(&state, "trial.licenseKey")?.is_some(),
+        licensed: setting_value(&state, "trial.licenseKey")?
+            .map(|key| license::verify(&key).valid)
+            .unwrap_or(false),
         first_transcript: false,
     })
 }
@@ -1953,6 +1988,16 @@ fn show_voice_bar(app: AppHandle) -> Result<(), String> {
 /// Set once the compositor blur has been requested, so it is attempted after
 /// the window exists but never re-requested on every show.
 static BLUR_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether the compositor accepted the blur request. The UI needs this: its
+/// material is tuned for an unblurred backdrop by default, and stacking that
+/// tint on top of real blur is what turns the bar into a dark slab.
+static BLUR_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Does the desktop behind the bar get blurred by the compositor?
+#[tauri::command]
+fn desktop_blur_active() -> bool {
+    BLUR_ACTIVE.load(Ordering::SeqCst)
+}
 
 #[tauri::command]
 fn show_voice_bar_passive(app: AppHandle) -> Result<(), String> {
@@ -1968,7 +2013,14 @@ fn show_voice_bar_passive(app: AppHandle) -> Result<(), String> {
     // like painted gradients before.
     if !BLUR_REQUESTED.swap(true, Ordering::SeqCst) {
         match panel::enable_background_blur(&window) {
-            Ok(()) => eprintln!("[voice-bar] background blur enabled"),
+            Ok(()) => {
+                BLUR_ACTIVE.store(true, Ordering::SeqCst);
+                // Deliberately says "accepted", not "enabled": this only means
+                // the compositor took the request. Whether anything is
+                // actually blurred depends on the effect being switched on,
+                // which a bind cannot tell us.
+                eprintln!("[voice-bar] background blur request accepted");
+            }
             Err(err) => {
                 eprintln!("[voice-bar] background blur unavailable: {err}");
                 // Allow a later attempt; the surface may simply not be mapped
@@ -2352,6 +2404,9 @@ pub fn run() {
             start_push_to_talk,
             stop_push_to_talk,
             get_trial_status,
+            activate_license,
+            get_license,
+            desktop_blur_active,
             get_llm_settings,
             set_llm_api_key,
             set_cloud_asr_api_key,

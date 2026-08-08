@@ -29,6 +29,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # table. apple-native = Keychain, sync-secret-service = Secret Service
 # (kwallet/gnome-keyring) over D-Bus.
 keyring = { version = "3", features = ["apple-native", "sync-secret-service", "crypto-rust"] }
+ed25519-dalek = { version = "3.0.0", default-features = false, features = ["alloc"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Push-to-talk on Wayland: XDG Portal GlobalShortcuts over D-Bus, with a

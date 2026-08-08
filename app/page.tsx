@@ -463,7 +463,7 @@ export default function Home() {
               <Select value={modelId} onChange={setModelId}>
                 {bootstrap.models.map((model) => (
                   <option key={model.id} value={model.id}>
-                    {model.name}
+                    {model.name.replace(/\s*\(.*\)$/, "")}
                   </option>
                 ))}
               </Select>

@@ -30,8 +30,14 @@
   /* Ink ------------------------------------------------------------------ */
   --c-ink: oklch(0.24 0.017 264);
   --c-ink-2: oklch(0.44 0.014 264);
-  --c-smoke: oklch(0.556 0.013 264);
-  --c-faint: oklch(0.68 0.011 264);
+  /* Text colours are held to WCAG AA for body text (4.5:1), not to whatever
+     looked tasteful. Measured against this scheme's paper, that means
+     L <= 0.481 — the earlier values were 3.41:1 for smoke and 2.25:1 for
+     faint, and both were being used at 10-12px where the large-text
+     exemption does not apply. Muted is a hierarchy signal; it is not a
+     licence to make text unreadable. */
+  --c-smoke: oklch(0.474 0.014 264);
+  --c-faint: oklch(0.474 0.012 264);
 
   /* Accents -------------------------------------------------------------- */
   --c-accent: oklch(0.58 0.183 258);
@@ -155,11 +161,17 @@
 
     --c-ink: oklch(0.97 0.004 264);
     --c-ink-2: oklch(0.80 0.010 264);
-    --c-smoke: oklch(0.685 0.012 264);
-    --c-faint: oklch(0.56 0.012 264);
+    --c-smoke: oklch(0.775 0.012 264);
+    --c-faint: oklch(0.70 0.012 264);
 
-    --c-accent: oklch(0.72 0.155 256);
-    --c-accent-ink: oklch(0.16 0.02 264);
+    /* Blue with white text, same as the light scheme.
+       This used to be a brighter blue (L 0.72) carrying near-black text. That
+       reached contrast, but dark text on a saturated blue fill reads as a
+       mistake rather than a choice, and it made the primary action look unlike
+       every other button in the app. Darkening the fill instead keeps white
+       text, which is what a filled accent button is expected to look like. */
+    --c-accent: oklch(0.60 0.168 256);
+    --c-accent-ink: oklch(0.995 0 0);
     --c-rust: oklch(0.695 0.175 27);
     --c-moss: oklch(0.755 0.145 158);
 
@@ -557,6 +569,12 @@ button {
   .field {
     appearance: none;
     -webkit-appearance: none;
+    /* Inherit nothing: form controls default to the UA's 16px, which sat a
+       full step above the 12.5px body text beside them and made the toolbar
+       read as a different app than the footer. */
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.2;
     background-color: var(--glass-raised-fill);
     background-image: var(--glass-raised-tint);
     border: 1px solid var(--c-line);

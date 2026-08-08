@@ -63,6 +63,11 @@ export async function setSetting(key: string, value: string): Promise<void> {
   await invokeCommand("set_setting", { key, value });
 }
 
+/** Whether the compositor blurs behind the bar; drives the glass material. */
+export async function desktopBlurActive(): Promise<boolean> {
+  return invokeCommand<boolean>("desktop_blur_active");
+}
+
 export async function getTrialStatus(): Promise<TrialStatus> {
   return invokeCommand<TrialStatus>("get_trial_status");
 }

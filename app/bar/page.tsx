@@ -11,6 +11,7 @@ import {
   listAudioInputs,
   resizeVoiceBar,
   beginVoiceBarDrag,
+  desktopBlurActive,
   endVoiceBarDrag,
   trackVoiceBarDrag,
   showVoiceBarPassive,
@@ -62,6 +63,17 @@ export default function VoiceBar() {
   useEffect(() => {
     recordingRef.current = recording;
   }, [recording]);
+
+  // The pill's material defaults to a tint heavy enough to stay legible with
+  // no blur behind it. When the compositor *is* blurring, that tint stacks on
+  // top of the blur and reads as a dark slab, so the CSS switches profile.
+  useEffect(() => {
+    desktopBlurActive()
+      .then((active) => {
+        document.documentElement.dataset.desktopBlur = active ? "true" : "false";
+      })
+      .catch(() => {});
+  }, []);
 
   // Keep the window exactly as large as the pill. Measuring the DOM beats
   // guessing a size per state: the window never clips the text, and never
