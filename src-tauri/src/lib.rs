@@ -1,4 +1,5 @@
 pub mod hotkey;
+mod panel;
 
 /// Test hook for `examples/ptt_probe.rs`: start a listener and hand back the
 /// resolved backend so the fallback chain can be exercised without the GUI.
@@ -1592,6 +1593,22 @@ fn show_voice_bar_passive(app: AppHandle) -> Result<(), String> {
     window.show().map_err(|err| err.to_string())
 }
 
+/// Anchor the voice bar to a screen edge. Returns what the platform actually
+/// achieved, so the UI can tell a real panel from a positioned window.
+#[tauri::command]
+fn anchor_voice_bar(
+    app: AppHandle,
+    anchor: String,
+    margin: Option<i32>,
+) -> Result<panel::PanelStatus, String> {
+    let window = app
+        .get_webview_window("voice-bar")
+        .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
+    let anchor = panel::PanelAnchor::parse(&anchor)
+        .ok_or_else(|| format!("Unknown panel anchor '{anchor}'."))?;
+    panel::anchor(&window, anchor, margin.unwrap_or(16))
+}
+
 #[tauri::command]
 fn hide_voice_bar(app: AppHandle) -> Result<(), String> {
     let window = app
@@ -1672,6 +1689,19 @@ pub fn run() {
                 streaming: Mutex::new(None),
                 push_to_talk: Mutex::new(None),
             });
+
+            // Anchor the voice bar while it is still unmapped. gtk-layer-shell
+            // must claim the surface before the GTK window is realized, which
+            // is why the window is declared `visible: false` in the config.
+            if let Some(bar) = app.get_webview_window("voice-bar") {
+                match panel::anchor(&bar, panel::PanelAnchor::BottomCenter, 24) {
+                    Ok(status) => eprintln!(
+                        "[voice-bar] anchored (layer_shell={}): {}",
+                        status.layer_shell, status.detail
+                    ),
+                    Err(err) => eprintln!("[voice-bar] anchor failed: {err}"),
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1701,6 +1731,7 @@ pub fn run() {
             auto_paste_text,
             show_voice_bar,
             show_voice_bar_passive,
+            anchor_voice_bar,
             hide_voice_bar,
             show_settings_window
         ])

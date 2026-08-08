@@ -32,6 +32,11 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # non-empty app id, which an uninstalled dev build does not have).
 zbus = { version = "5", default-features = false, features = ["tokio", "blocking-api"] }
 evdev = "0.13"
+# Anchor the voice bar as a real wlr-layer-shell panel. Version must track the
+# gtk 0.18 that Tauri itself links, or there would be two incompatible GTKs.
+# v0_6 gates is_supported() and set_keyboard_mode(); system lib is 0.10.
+gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
+gtk = "0.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Push-to-talk on macOS: a CGEventTap gives both key edges and can run its own
@@ -39,3 +44,5 @@ evdev = "0.13"
 # the main run loop. Requires Accessibility permission.
 core-foundation = "0.10"
 core-graphics = "0.24"
+# Raw NSWindow messaging for the floating panel behaviour.
+objc = "0.2"
