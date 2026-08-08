@@ -112,8 +112,12 @@
      the profile below drops the alpha so the blurred desktop supplies the
      colour instead. */
   --pill-tint: 232 14% 8%; /* near-neutral; the desktop supplies the colour */
-  --pill-alpha: 0.46;
-  --pill-sat: 170%;
+  /* 0.38 is where this stops being a tradeoff and starts being a balance,
+     measured against a desktop that is white on one side and near-black on the
+     other: below ~0.32 the text behind the bar reads straight through it and
+     competes with the transcript; above ~0.5 it stops transmitting and goes
+     back to looking like a painted chip. */
+  --pill-alpha: 0.38;
   --pill-rim: var(--rim);
   --pill-glow: oklch(1 0 0 / 0.24);
   --pill-top: oklch(1 0 0 / 0.20);
@@ -645,7 +649,6 @@ body:has(main[data-transparent="true"]) {
     --glass-chrome-tint: none;
     --glass-raised-tint: none;
     --pill-alpha: 1;
-    --pill-blur: 0px;
     --pill-text-shadow: none;
     --pill-glow: transparent;
   }
