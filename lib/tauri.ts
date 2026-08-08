@@ -9,6 +9,7 @@ import type {
   ModelDownloadEvent,
   NativeAudioCaptureResult,
   PasteResult,
+  StreamingEvent,
   SessionInfo,
   TranscriptInfo,
 } from "@/lib/types";
@@ -55,6 +56,20 @@ export async function createSession(input: {
 
 export async function setSetting(key: string, value: string): Promise<void> {
   await invokeCommand("set_setting", { key, value });
+}
+
+export async function startStreamingTranscription(
+  modelId: string,
+  onEvent: (event: StreamingEvent) => void,
+): Promise<void> {
+  const mod = await import("@tauri-apps/api/core");
+  const channel = new mod.Channel<StreamingEvent>();
+  channel.onmessage = onEvent;
+  await mod.invoke("start_streaming_transcription", { modelId, onEvent: channel });
+}
+
+export async function stopStreamingTranscription(): Promise<void> {
+  await invokeCommand("stop_streaming_transcription");
 }
 
 export async function downloadModelWithProgress(

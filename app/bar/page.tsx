@@ -10,17 +10,19 @@ import {
   getAudioLevel,
   hideVoiceBar,
   listAudioInputs,
-  previewAudio,
-  snapshotAudioCapture,
+  startStreamingTranscription,
+  stopStreamingTranscription,
   startAudioCapture,
   stopAudioCapture,
   transcribeAudio,
 } from "@/lib/tauri";
-import type { AudioInputInfo, AudioLevelInfo } from "@/lib/types";
+import type { AudioInputInfo, AudioLevelInfo, StreamingEvent } from "@/lib/types";
 
 const idleLevel: AudioLevelInfo = { rms: 0, peak: 0, db: -90, percent: 0 };
-const previewIntervalMs = 6500;
-const previewWindowMs = 5500;
+// Committed preview segments, joined with the live partial for display.
+function joinPreview(segments: string[], partial: string): string {
+  return [...segments, partial].filter((part) => part.trim()).join(" ");
+}
 
 export default function VoiceBar() {
   const [recording, setRecording] = useState(false);
@@ -31,9 +33,8 @@ export default function VoiceBar() {
   const [audioInputId, setAudioInputId] = useState("");
   const [inputLevel, setInputLevel] = useState<AudioLevelInfo>(idleLevel);
   const sessionIdRef = useRef<string | null>(null);
-  const previewTimerRef = useRef<number | null>(null);
+  const segmentsRef = useRef<string[]>([]);
   const levelTimerRef = useRef<number | null>(null);
-  const previewBusyRef = useRef(false);
 
   useEffect(() => {
     void refreshAudioInputs();
@@ -73,7 +74,8 @@ export default function VoiceBar() {
           .then(setInputLevel)
           .catch((error) => setStatus(String(error)));
       }, 120);
-      previewTimerRef.current = window.setInterval(runPreview, previewIntervalMs);
+      segmentsRef.current = [];
+      await startStreamingTranscription("fun-asr-nano-2512", handleStreamingEvent);
     } catch (error) {
       setRecording(false);
       sessionIdRef.current = null;
@@ -83,35 +85,19 @@ export default function VoiceBar() {
     }
   }
 
-  async function runPreview() {
-    if (previewBusyRef.current) return;
-    previewBusyRef.current = true;
-    try {
-      const capture = await snapshotAudioCapture(previewWindowMs);
-      setInputLevel(capture);
-      if (capture.durationMs < 2500 || !capture.speechLike) {
-        setStatus(`Listening · input ${formatDb(capture.db)}`);
-        return;
-      }
-      setStatus(`Updating preview · input ${formatDb(capture.db)}`);
-      const result = await previewAudio({
-        sessionId: sessionIdRef.current || undefined,
-        audioBase64: capture.audioBase64,
-        modelId: "fun-asr-nano-2512",
-        language: "中文",
-      });
-      if (result.text) setPartial(result.text);
-      if (result.error) setStatus(result.error);
-    } catch (error) {
-      setStatus(String(error));
-    } finally {
-      previewBusyRef.current = false;
+  function handleStreamingEvent(event: StreamingEvent) {
+    if (event.event === "partial") {
+      setPartial(joinPreview(segmentsRef.current, event.data.text));
+    } else if (event.event === "segment") {
+      segmentsRef.current = [...segmentsRef.current, event.data.text];
+      setPartial(joinPreview(segmentsRef.current, ""));
+    } else if (event.event === "error") {
+      setStatus(event.data.error);
     }
   }
 
   function clearRecordingTimers() {
-    if (previewTimerRef.current) window.clearInterval(previewTimerRef.current);
-    previewTimerRef.current = null;
+    void stopStreamingTranscription().catch(() => {});
     if (levelTimerRef.current) window.clearInterval(levelTimerRef.current);
     levelTimerRef.current = null;
   }

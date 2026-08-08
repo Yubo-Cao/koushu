@@ -25,16 +25,17 @@ import {
   listSessions,
   listTranscripts,
   pauseModelDownload,
-  previewAudio,
   showSettingsWindow,
   showVoiceBar,
-  snapshotAudioCapture,
+  startStreamingTranscription,
+  stopStreamingTranscription,
   startAudioCapture,
   stopAudioCapture,
   transcribeAudio,
 } from "@/lib/tauri";
 import type {
   AudioInputInfo,
+  StreamingEvent,
   AudioLevelInfo,
   Bootstrap,
   ModelDownloadEvent,
@@ -46,8 +47,10 @@ import type {
 import { languages } from "@/lib/types";
 
 const idleLevel: AudioLevelInfo = { rms: 0, peak: 0, db: -90, percent: 0 };
-const previewIntervalMs = 6500;
-const previewWindowMs = 5500;
+// Committed preview segments, joined with the live partial for display.
+function joinPreview(segments: string[], partial: string): string {
+  return [...segments, partial].filter((part) => part.trim()).join(" ");
+}
 
 export default function Home() {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
@@ -65,9 +68,8 @@ export default function Home() {
   const [busy, setBusy] = useState<string | null>(null);
   const [download, setDownload] = useState<ModelDownloadState | null>(null);
   const recordingSessionIdRef = useRef<string | null>(null);
-  const previewTimerRef = useRef<number | null>(null);
+  const segmentsRef = useRef<string[]>([]);
   const levelTimerRef = useRef<number | null>(null);
-  const previewBusyRef = useRef(false);
 
   useEffect(() => {
     getBootstrap()
@@ -238,9 +240,8 @@ export default function Home() {
           .then(setInputLevel)
           .catch((error) => setStatus(String(error)));
       }, 120);
-      previewTimerRef.current = window.setInterval(() => {
-        void runPreview(session.id);
-      }, previewIntervalMs);
+      segmentsRef.current = [];
+      await startStreamingTranscription(modelId, handleStreamingEvent);
     } catch (error) {
       setRecording(false);
       recordingSessionIdRef.current = null;
@@ -250,35 +251,19 @@ export default function Home() {
     }
   }
 
-  async function runPreview(sessionId: string) {
-    if (previewBusyRef.current) return;
-    previewBusyRef.current = true;
-    try {
-      const capture = await snapshotAudioCapture(previewWindowMs);
-      setInputLevel(capture);
-      if (capture.durationMs < 2500 || !capture.speechLike) {
-        setStatus(`Listening · input ${formatDb(capture.db)}`);
-        return;
-      }
-      setStatus(`Updating preview · input ${formatDb(capture.db)}`);
-      const result = await previewAudio({
-        sessionId,
-        audioBase64: capture.audioBase64,
-        modelId,
-        language,
-      });
-      if (result.text) setPartial(result.text);
-      if (result.error) setStatus(result.error);
-    } catch (error) {
-      setStatus(String(error));
-    } finally {
-      previewBusyRef.current = false;
+  function handleStreamingEvent(event: StreamingEvent) {
+    if (event.event === "partial") {
+      setPartial(joinPreview(segmentsRef.current, event.data.text));
+    } else if (event.event === "segment") {
+      segmentsRef.current = [...segmentsRef.current, event.data.text];
+      setPartial(joinPreview(segmentsRef.current, ""));
+    } else if (event.event === "error") {
+      setStatus(event.data.error);
     }
   }
 
   function clearRecordingTimers() {
-    if (previewTimerRef.current) window.clearInterval(previewTimerRef.current);
-    previewTimerRef.current = null;
+    void stopStreamingTranscription().catch(() => {});
     if (levelTimerRef.current) window.clearInterval(levelTimerRef.current);
     levelTimerRef.current = null;
   }

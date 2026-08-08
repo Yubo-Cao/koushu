@@ -150,3 +150,24 @@ export const languages = [
   "Deutsch",
   "Español",
 ] as const;
+
+/**
+ * Events from the native streaming transcriber.
+ *
+ * Both variants are previews. Segment boundaries can cut mid-sentence and short
+ * spans decode worse, so the authoritative transcript is the one produced by
+ * re-transcribing the whole recording when capture stops.
+ */
+export type StreamingEvent =
+  | {
+      event: "partial";
+      data: { segmentIndex: number; text: string };
+    }
+  | {
+      event: "segment";
+      data: { segmentIndex: number; text: string; startMs: number; endMs: number };
+    }
+  | {
+      event: "error";
+      data: { error: string };
+    };

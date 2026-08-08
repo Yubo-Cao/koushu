@@ -41,7 +41,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb"],
+    "targets": [
+      "deb"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -49,8 +51,14 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "externalBin": ["binaries/llama-funasr-cli", "binaries/llama-funasr-sensevoice"],
-    "resources": ["binaries/*"],
+    "externalBin": [
+      "binaries/llama-funasr-cli",
+      "binaries/llama-funasr-sensevoice",
+      "binaries/llama-funasr-vad"
+    ],
+    "resources": [
+      "binaries/*"
+    ],
     "category": "Productivity",
     "shortDescription": "Fun-ASR desktop voice transcription.",
     "longDescription": "A local desktop wrapper for Fun-ASR with microphone capture, saved transcripts, model setup, and a floating voice bar."

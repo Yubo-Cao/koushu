@@ -16,7 +16,7 @@ use std::{
         mpsc, Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{ipc::Channel, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use uuid::Uuid;
@@ -35,6 +35,12 @@ const FUNASR_SENSEVOICE_BIN_NAME: &str = "llama-funasr-sensevoice-x86_64-unknown
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 const FUNASR_SENSEVOICE_BIN_NAME: &str = "llama-funasr-sensevoice-unsupported-platform";
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const FUNASR_VAD_BIN_NAME: &str = "llama-funasr-vad-x86_64-unknown-linux-gnu";
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+const FUNASR_VAD_BIN_NAME: &str = "llama-funasr-vad-unsupported-platform";
 
 /// Backend id for Fun-ASR-Nano on the official llama.cpp runtime.
 const BACKEND_NANO: &str = "funasr-nano-gguf-cpu";
@@ -90,8 +96,25 @@ struct AppState {
     app_dir: PathBuf,
     funasr_cli_bin: PathBuf,
     funasr_sensevoice_bin: PathBuf,
+    funasr_vad_bin: PathBuf,
     downloads: Mutex<HashMap<String, Arc<AtomicBool>>>,
     audio_capture: Mutex<Option<AudioCaptureHandle>>,
+    streaming: Mutex<Option<StreamingHandle>>,
+}
+
+/// A running streaming-transcription worker. Dropping it stops the worker.
+struct StreamingHandle {
+    stop: Arc<AtomicBool>,
+    join: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for StreamingHandle {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
 }
 
 struct AudioCaptureHandle {
@@ -429,6 +452,373 @@ fn snapshot_audio_capture(
         .clone();
     let samples = trim_audio_samples(&samples, capture.sample_rate, max_ms);
     encode_capture_result(&samples, capture.sample_rate)
+}
+
+// ---------------------------------------------------------------------------
+// Streaming transcription
+//
+// The official CLIs are one-shot: they load the model, transcribe a file, and
+// exit. Load costs ~0.17 s, and inference runs at 8.8x realtime (Nano) or 20.8x
+// (SenseVoice) on CPU, so re-spawning per update is cheap enough that no
+// resident server process is needed.
+//
+// Two tiers, because they have different strengths:
+//   - while you are still speaking, SenseVoice re-transcribes the in-progress
+//     segment for a live preview (fast, occasionally wrong);
+//   - once the segment ends, the model you actually selected re-runs it to
+//     produce the committed text (accurate).
+//
+// Text accumulates per segment, so nothing scrolls out of the preview the way
+// it did with the old fixed rolling window.
+//
+// Everything this module emits is a preview. Segmentation costs accuracy, so
+// the caller re-transcribes the full recording on stop for the real text.
+// ---------------------------------------------------------------------------
+
+/// How often the worker wakes to re-run VAD over the uncommitted audio.
+const STREAM_POLL_MS: u64 = 250;
+/// A segment is committed once VAD reports this much audio after its end.
+/// Without the margin, a brief mid-sentence pause would commit early.
+const SEGMENT_TAIL_SILENCE_MS: u64 = 500;
+/// Segments shorter than this are treated as noise and dropped.
+const VAD_MIN_SPEECH_MS: u64 = 320;
+/// How often the in-progress segment is re-transcribed for the live preview.
+const PARTIAL_REFRESH_MS: u64 = 900;
+/// Commit an in-progress span once it reaches this length, even though VAD has
+/// not seen a pause yet.
+///
+/// Preview cost grows with span length (~0.17 s startup + length/20.8 for
+/// SenseVoice), so an unbroken monologue would eventually outrun
+/// `PARTIAL_REFRESH_MS` and stop feeling live — and nothing would be committed
+/// for as long as the speaker kept going. Capping at 12 s keeps a preview pass
+/// near 0.75 s and guarantees text lands on screen regularly.
+const FORCE_COMMIT_MS: u64 = 12_000;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "event",
+    content = "data"
+)]
+enum StreamingEvent {
+    /// Live, still-changing text for the segment currently being spoken.
+    Partial { segment_index: usize, text: String },
+    /// Text for a segment that has stopped changing.
+    ///
+    /// Still a preview, not a final answer. Segment boundaries — especially the
+    /// forced 12 s break — can cut mid-sentence, and the models lose accuracy on
+    /// short isolated spans. Measured on this project's test clip: transcribing
+    /// the whole 30 s at once yields "adding noise in two different parts, one
+    /// in the uh boundary line", while the 2.8 s tail segment alone decodes as
+    /// "All right, do I need a laundry bin now?".
+    ///
+    /// Callers must re-transcribe the complete recording on stop and treat that
+    /// as the authoritative text.
+    Segment {
+        segment_index: usize,
+        text: String,
+        start_ms: u64,
+        end_ms: u64,
+    },
+    Error { error: String },
+}
+
+/// Everything the worker thread needs, resolved once at start so it never
+/// touches the database or Tauri state while running.
+struct StreamingJob {
+    samples: Arc<Mutex<Vec<f32>>>,
+    sample_rate: u32,
+    final_model: ModelInfo,
+    final_bin: PathBuf,
+    /// SenseVoice, when installed, for the low-latency preview pass.
+    preview: Option<(ModelInfo, PathBuf)>,
+    vad_bin: PathBuf,
+    vad_gguf: PathBuf,
+    scratch_dir: PathBuf,
+    stop: Arc<AtomicBool>,
+}
+
+/// Write samples to a temporary 16 kHz mono WAV and transcribe it.
+fn transcribe_samples(
+    model: &ModelInfo,
+    bin: &Path,
+    samples: &[f32],
+    sample_rate: u32,
+    scratch: &Path,
+) -> Result<String, String> {
+    let resampled = resample_linear(samples, sample_rate, 16_000);
+    let wav = encode_wav_i16(&resampled, 16_000)?;
+    let path = scratch.join(format!("stream-{}.wav", Uuid::new_v4()));
+    fs::write(&path, wav).map_err(|err| err.to_string())?;
+
+    let result = match model.backend.as_str() {
+        BACKEND_NANO => transcribe_with_funasr_nano(bin, model, &path),
+        BACKEND_SENSEVOICE => transcribe_with_sensevoice(bin, model, &path),
+        other => Err(format!("Unknown ASR backend '{other}'")),
+    };
+    let _ = fs::remove_file(&path);
+    result.map(|(text, _)| text)
+}
+
+fn samples_for_ms(sample_rate: u32, ms: u64) -> usize {
+    ((u64::from(sample_rate) * ms) / 1000) as usize
+}
+
+fn ms_for_samples(sample_rate: u32, count: usize) -> u64 {
+    if sample_rate == 0 {
+        return 0;
+    }
+    (count as u64 * 1000) / u64::from(sample_rate)
+}
+
+/// Run the official ggml FSMN-VAD over a WAV and return `(start_ms, end_ms)`
+/// speech spans.
+///
+/// A trained VAD is used rather than an energy threshold on purpose: real
+/// recordings sit on a noise floor that swamps any fixed cutoff. On a sample of
+/// this project's own test audio the quietest 20 ms frame measured RMS 0.030 —
+/// above every plausible threshold — so an energy gate marked 100% of the clip
+/// as speech, while FSMN-VAD correctly found the trailing 3 s of silence.
+/// It is also cheap: ~14 ms for 3 s of audio, ~95 ms for 30 s.
+fn run_vad(vad_bin: &Path, vad_gguf: &Path, wav_path: &Path) -> Result<Vec<(u64, u64)>, String> {
+    if !vad_bin.exists() {
+        return Err("Bundled FSMN-VAD runtime is missing from the app resources.".to_string());
+    }
+    let output = low_priority_command(vad_bin)
+        .arg("-m")
+        .arg(vad_gguf)
+        .arg("-a")
+        .arg(wav_path)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(compact_process_error(&output.stdout, &output.stderr));
+    }
+
+    let mut spans = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let mut parts = line.split_whitespace();
+        if let (Some(start), Some(end)) = (parts.next(), parts.next()) {
+            if let (Ok(start), Ok(end)) = (start.parse::<u64>(), end.parse::<u64>()) {
+                if end > start {
+                    spans.push((start, end));
+                }
+            }
+        }
+    }
+    Ok(spans)
+}
+
+fn run_streaming_worker(job: StreamingJob, on_event: Channel<StreamingEvent>) {
+    // Absolute sample index. Everything before it has been committed.
+    let mut cursor = 0_usize;
+    let mut segment_index = 0_usize;
+    let mut last_partial = Instant::now() - Duration::from_millis(PARTIAL_REFRESH_MS);
+    let mut last_partial_text = String::new();
+    let min_pending = samples_for_ms(job.sample_rate, VAD_MIN_SPEECH_MS);
+
+    while !job.stop.load(Ordering::SeqCst) {
+        thread::sleep(Duration::from_millis(STREAM_POLL_MS));
+
+        let samples = match job.samples.lock() {
+            Ok(guard) => guard.clone(),
+            Err(_) => break,
+        };
+        if samples.len().saturating_sub(cursor) < min_pending {
+            continue;
+        }
+        let pending = &samples[cursor..];
+        let pending_ms = ms_for_samples(job.sample_rate, pending.len());
+
+        // VAD wants a file, so stage the uncommitted audio once and reuse it
+        // for both the VAD pass and any transcription below.
+        let resampled = resample_linear(pending, job.sample_rate, 16_000);
+        let staged = job.scratch_dir.join(format!("pending-{}.wav", Uuid::new_v4()));
+        let write_ok = encode_wav_i16(&resampled, 16_000)
+            .and_then(|wav| fs::write(&staged, wav).map_err(|err| err.to_string()));
+        if let Err(err) = write_ok {
+            let _ = on_event.send(StreamingEvent::Error { error: err });
+            let _ = fs::remove_file(&staged);
+            continue;
+        }
+
+        let spans = match run_vad(&job.vad_bin, &job.vad_gguf, &staged) {
+            Ok(spans) => spans,
+            Err(err) => {
+                let _ = on_event.send(StreamingEvent::Error { error: err });
+                let _ = fs::remove_file(&staged);
+                continue;
+            }
+        };
+        let _ = fs::remove_file(&staged);
+
+        let Some(&(first_start_ms, first_end_ms)) = spans.first() else {
+            // Nothing but silence. Drop all but a small tail so the buffer we
+            // re-scan every tick does not grow without bound.
+            let keep = samples_for_ms(job.sample_rate, SEGMENT_TAIL_SILENCE_MS);
+            cursor = samples.len().saturating_sub(keep);
+            last_partial_text.clear();
+            continue;
+        };
+
+        // The first span is committable once enough audio has arrived after it
+        // for the silence to be real rather than the recording simply ending.
+        let settled = pending_ms.saturating_sub(first_end_ms) >= SEGMENT_TAIL_SILENCE_MS;
+        // Or once it has run long enough that waiting for a pause would stall
+        // both the preview and any committed output.
+        let overlong = first_end_ms.saturating_sub(first_start_ms) >= FORCE_COMMIT_MS;
+
+        if settled || overlong {
+            let start = samples_for_ms(job.sample_rate, first_start_ms);
+            let end_ms = if settled {
+                first_end_ms
+            } else {
+                first_start_ms + FORCE_COMMIT_MS
+            };
+            let end = samples_for_ms(job.sample_rate, end_ms).min(pending.len());
+            if end > start && ms_for_samples(job.sample_rate, end - start) >= VAD_MIN_SPEECH_MS {
+                let abs_start_ms = ms_for_samples(job.sample_rate, cursor + start);
+                let abs_end_ms = ms_for_samples(job.sample_rate, cursor + end);
+                match transcribe_samples(
+                    &job.final_model,
+                    &job.final_bin,
+                    &pending[start..end],
+                    job.sample_rate,
+                    &job.scratch_dir,
+                ) {
+                    Ok(text) if !text.trim().is_empty() => {
+                        let _ = on_event.send(StreamingEvent::Segment {
+                            segment_index,
+                            text,
+                            start_ms: abs_start_ms,
+                            end_ms: abs_end_ms,
+                        });
+                        segment_index += 1;
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        let _ = on_event.send(StreamingEvent::Error { error: err });
+                    }
+                }
+            }
+            cursor += end;
+            last_partial_text.clear();
+            continue;
+        }
+
+        // Still speaking: refresh the live preview for the in-progress span.
+        if last_partial.elapsed() < Duration::from_millis(PARTIAL_REFRESH_MS) {
+            continue;
+        }
+        let start = samples_for_ms(job.sample_rate, first_start_ms);
+        if pending.len().saturating_sub(start) < min_pending {
+            continue;
+        }
+        let (model, bin) = job
+            .preview
+            .as_ref()
+            .map(|(model, bin)| (model, bin.as_path()))
+            .unwrap_or((&job.final_model, job.final_bin.as_path()));
+        last_partial = Instant::now();
+        match transcribe_samples(
+            model,
+            bin,
+            &pending[start..],
+            job.sample_rate,
+            &job.scratch_dir,
+        ) {
+            // Only emit on change; consecutive preview passes often agree.
+            Ok(text) if !text.trim().is_empty() && text != last_partial_text => {
+                last_partial_text = text.clone();
+                let _ = on_event.send(StreamingEvent::Partial {
+                    segment_index,
+                    text,
+                });
+            }
+            Ok(_) => {}
+            Err(err) => {
+                let _ = on_event.send(StreamingEvent::Error { error: err });
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn start_streaming_transcription(
+    state: tauri::State<'_, AppState>,
+    model_id: String,
+    on_event: Channel<StreamingEvent>,
+) -> Result<(), String> {
+    let final_model = get_model(&state, &model_id)?;
+    // Every GGUF model ships the shared FSMN-VAD alongside it.
+    let vad_gguf = gguf_model_dir(&final_model)?.join("fsmn-vad.gguf");
+    let final_bin = match final_model.backend.as_str() {
+        BACKEND_NANO => state.funasr_cli_bin.clone(),
+        BACKEND_SENSEVOICE => state.funasr_sensevoice_bin.clone(),
+        other => return Err(format!("Unknown ASR backend '{other}'")),
+    };
+
+    // SenseVoice drives the live preview when it is installed and is not
+    // already the selected model. If it is missing, previews fall back to the
+    // selected model, which is slower but still correct.
+    let preview = if final_model.backend == BACKEND_SENSEVOICE {
+        None
+    } else {
+        get_model(&state, "sensevoice-small")
+            .ok()
+            .filter(|model| gguf_model_dir(model).is_ok())
+            .map(|model| (model, state.funasr_sensevoice_bin.clone()))
+    };
+
+    let (samples, sample_rate) = {
+        let capture = state
+            .audio_capture
+            .lock()
+            .map_err(|_| "Audio capture lock poisoned".to_string())?;
+        let capture = capture
+            .as_ref()
+            .ok_or_else(|| "Start the microphone before streaming.".to_string())?;
+        (Arc::clone(&capture.samples), capture.sample_rate)
+    };
+
+    let scratch_dir = state.app_dir.join("audio").join("streaming");
+    fs::create_dir_all(&scratch_dir).map_err(|err| err.to_string())?;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let job = StreamingJob {
+        samples,
+        sample_rate,
+        final_model,
+        final_bin,
+        preview,
+        vad_bin: state.funasr_vad_bin.clone(),
+        vad_gguf,
+        scratch_dir,
+        stop: Arc::clone(&stop),
+    };
+    let join = thread::spawn(move || run_streaming_worker(job, on_event));
+
+    let mut streaming = state
+        .streaming
+        .lock()
+        .map_err(|_| "Streaming lock poisoned".to_string())?;
+    // Dropping any previous handle stops that worker first.
+    *streaming = Some(StreamingHandle {
+        stop,
+        join: Some(join),
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_streaming_transcription(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut streaming = state
+        .streaming
+        .lock()
+        .map_err(|_| "Streaming lock poisoned".to_string())?;
+    streaming.take();
+    Ok(())
 }
 
 #[tauri::command]
@@ -1143,14 +1533,17 @@ pub fn run() {
             };
             let funasr_cli_bin = resolve_bundled_bin(FUNASR_CLI_BIN_NAME);
             let funasr_sensevoice_bin = resolve_bundled_bin(FUNASR_SENSEVOICE_BIN_NAME);
+            let funasr_vad_bin = resolve_bundled_bin(FUNASR_VAD_BIN_NAME);
 
             app.manage(AppState {
                 db: Mutex::new(db),
                 app_dir,
                 funasr_cli_bin,
                 funasr_sensevoice_bin,
+                funasr_vad_bin,
                 downloads: Mutex::new(HashMap::new()),
                 audio_capture: Mutex::new(None),
+                streaming: Mutex::new(None),
             });
             Ok(())
         })
@@ -1160,6 +1553,8 @@ pub fn run() {
             get_audio_level,
             snapshot_audio_capture,
             stop_audio_capture,
+            start_streaming_transcription,
+            stop_streaming_transcription,
             get_bootstrap,
             complete_onboarding,
             reset_onboarding,
