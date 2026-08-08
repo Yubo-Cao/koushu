@@ -10,6 +10,7 @@ import {
   downloadModelWithProgress,
   getBootstrap,
   getLlmSettings,
+  setCloudAsrApiKey,
   setLlmApiKey,
   pauseModelDownload,
   resetOnboarding,
@@ -39,6 +40,10 @@ export default function SettingsPage() {
   const [llmPreset, setLlmPreset] = useState("typeset");
   // Never populated from the backend; the stored key is write-only from here.
   const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [asrBaseUrl, setAsrBaseUrl] = useState("");
+  const [asrModel, setAsrModel] = useState("");
+  const [asrLanguage, setAsrLanguage] = useState("");
+  const [asrKeyDraft, setAsrKeyDraft] = useState("");
 
   useEffect(() => {
     refresh();
@@ -60,6 +65,9 @@ export default function SettingsPage() {
         setDefaultLanguage(String(data.settings["defaults.language"] || "中文"));
         setRetainAudio(data.settings["audio.retain"] === "true");
         setAutoPaste(data.settings["floating.autoPaste"] !== "false");
+        setAsrBaseUrl(String(data.settings["asr.cloud.baseUrl"] || ""));
+        setAsrModel(String(data.settings["asr.cloud.model"] || ""));
+        setAsrLanguage(String(data.settings["asr.cloud.language"] || ""));
       })
       .catch((error) => setMessage(String(error)));
   }
@@ -143,6 +151,13 @@ export default function SettingsPage() {
       await setSetting("defaults.runtime", selectedModel?.backend || DEFAULT_BACKEND);
       await setSetting("audio.retain", retainAudio ? "true" : "false");
       await setSetting("floating.autoPaste", autoPaste ? "true" : "false");
+      await setSetting("asr.cloud.baseUrl", asrBaseUrl.trim());
+      await setSetting("asr.cloud.model", asrModel.trim());
+      await setSetting("asr.cloud.language", asrLanguage.trim());
+      if (asrKeyDraft.trim()) {
+        await setCloudAsrApiKey(asrKeyDraft.trim());
+        setAsrKeyDraft("");
+      }
       await setSetting("llm.baseUrl", llmBaseUrl.trim());
       await setSetting("llm.model", llmModel.trim());
       await setSetting("llm.preset", llmPreset);
@@ -275,6 +290,50 @@ export default function SettingsPage() {
             <p className="mt-3 text-sm leading-5 text-smoke">
               Runs entirely on the CPU. No GPU, no CUDA, and no Python are needed or used.
             </p>
+          </Panel>
+
+          <Panel title="Cloud transcription">
+            <p className="mb-3 text-sm leading-5 text-smoke">
+              Optional. Any OpenAI-compatible <code>/v1/audio/transcriptions</code>
+              endpoint (OpenAI, Groq, or a local whisper server). Select
+              &ldquo;Cloud transcription&rdquo; as the model to use it. The local
+              model keeps running the live preview either way.
+            </p>
+            <div className="space-y-3">
+              <Field label="Base URL">
+                <input
+                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  placeholder="https://api.groq.com/openai/v1"
+                  value={asrBaseUrl}
+                  onChange={(event) => setAsrBaseUrl(event.target.value)}
+                />
+              </Field>
+              <Field label="Model">
+                <input
+                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  placeholder="whisper-large-v3-turbo"
+                  value={asrModel}
+                  onChange={(event) => setAsrModel(event.target.value)}
+                />
+              </Field>
+              <Field label="Language hint (blank = autodetect)">
+                <input
+                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  placeholder="leave blank for code-switched speech"
+                  value={asrLanguage}
+                  onChange={(event) => setAsrLanguage(event.target.value)}
+                />
+              </Field>
+              <Field label="API key">
+                <input
+                  type="password"
+                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  placeholder="Leave blank to keep the stored key"
+                  value={asrKeyDraft}
+                  onChange={(event) => setAsrKeyDraft(event.target.value)}
+                />
+              </Field>
+            </div>
           </Panel>
 
           <Panel title="Markdown formatting">

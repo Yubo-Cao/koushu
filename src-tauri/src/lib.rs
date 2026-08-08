@@ -1,3 +1,4 @@
+pub mod asr_cloud;
 pub mod hotkey;
 pub mod llm;
 mod panel;
@@ -84,6 +85,11 @@ const FUNASR_VAD_BIN_NAME: &str = "llama-funasr-vad-unsupported-platform";
 const BACKEND_NANO: &str = "funasr-nano-gguf-cpu";
 /// Backend id for SenseVoiceSmall on the official llama.cpp runtime.
 const BACKEND_SENSEVOICE: &str = "funasr-sensevoice-gguf-cpu";
+/// Backend id for a hosted OpenAI-compatible transcription endpoint. Has no
+/// local assets, so it is never downloaded — only configured.
+const BACKEND_CLOUD: &str = "cloud-openai-transcriptions";
+
+const CLOUD_ASR_KEYRING_USER: &str = "cloud-asr-api-key";
 
 /// One file that has to be present before a GGUF model can run.
 struct GgufAsset {
@@ -302,6 +308,7 @@ struct AsrJob {
     retain_audio: bool,
     funasr_cli_bin: PathBuf,
     funasr_sensevoice_bin: PathBuf,
+    cloud: Option<asr_cloud::CloudAsrConfig>,
 }
 
 struct AsrJobOutput {
@@ -577,6 +584,9 @@ struct StreamingJob {
     preview: Option<(ModelInfo, PathBuf)>,
     vad_bin: PathBuf,
     vad_gguf: PathBuf,
+    /// Only the committed pass may use this; previews stay local so they keep
+    /// their sub-second latency and never bill per keystroke.
+    cloud: Option<asr_cloud::CloudAsrConfig>,
     scratch_dir: PathBuf,
     stop: Arc<AtomicBool>,
 }
@@ -588,6 +598,7 @@ fn transcribe_samples(
     samples: &[f32],
     sample_rate: u32,
     scratch: &Path,
+    cloud: Option<&asr_cloud::CloudAsrConfig>,
 ) -> Result<String, String> {
     let resampled = resample_linear(samples, sample_rate, 16_000);
     let wav = encode_wav_i16(&resampled, 16_000)?;
@@ -597,6 +608,10 @@ fn transcribe_samples(
     let result = match model.backend.as_str() {
         BACKEND_NANO => transcribe_with_funasr_nano(bin, model, &path),
         BACKEND_SENSEVOICE => transcribe_with_sensevoice(bin, model, &path),
+        BACKEND_CLOUD => match cloud {
+            Some(config) => asr_cloud::transcribe(config, &path).map(|t| (t, String::new())),
+            None => Err("Cloud ASR is selected but not configured.".to_string()),
+        },
         other => Err(format!("Unknown ASR backend '{other}'")),
     };
     let _ = fs::remove_file(&path);
@@ -728,6 +743,7 @@ fn run_streaming_worker(job: StreamingJob, on_event: Channel<StreamingEvent>) {
                     &pending[start..end],
                     job.sample_rate,
                     &job.scratch_dir,
+                    job.cloud.as_ref(),
                 ) {
                     Ok(text) if !text.trim().is_empty() => {
                         let _ = on_event.send(StreamingEvent::Segment {
@@ -769,6 +785,9 @@ fn run_streaming_worker(job: StreamingJob, on_event: Channel<StreamingEvent>) {
             &pending[start..],
             job.sample_rate,
             &job.scratch_dir,
+            // Previews are deliberately local-only: a network round trip per
+            // 900 ms refresh would be neither fast enough nor cheap enough.
+            None,
         ) {
             // Only emit on change; consecutive preview passes often agree.
             Ok(text) if !text.trim().is_empty() && text != last_partial_text => {
@@ -793,11 +812,28 @@ fn start_streaming_transcription(
     on_event: Channel<StreamingEvent>,
 ) -> Result<(), String> {
     let final_model = get_model(&state, &model_id)?;
-    // Every GGUF model ships the shared FSMN-VAD alongside it.
-    let vad_gguf = gguf_model_dir(&final_model)?.join("fsmn-vad.gguf");
+
+    // The cloud backend has no local files, but segmentation still runs
+    // locally, so VAD comes from whichever GGUF model is installed.
+    let vad_gguf = if final_model.backend == BACKEND_CLOUD {
+        ["fun-asr-nano-2512", "sensevoice-small"]
+            .iter()
+            .find_map(|id| get_model(&state, id).ok().and_then(|m| gguf_model_dir(&m).ok()))
+            .ok_or_else(|| {
+                "Cloud ASR still needs a local model installed for voice activity detection."
+                    .to_string()
+            })?
+            .join("fsmn-vad.gguf")
+    } else {
+        gguf_model_dir(&final_model)?.join("fsmn-vad.gguf")
+    };
+
     let final_bin = match final_model.backend.as_str() {
         BACKEND_NANO => state.funasr_cli_bin.clone(),
         BACKEND_SENSEVOICE => state.funasr_sensevoice_bin.clone(),
+        // Never invoked for the cloud backend; transcribe_samples branches on
+        // the backend before it would be used.
+        BACKEND_CLOUD => PathBuf::new(),
         other => return Err(format!("Unknown ASR backend '{other}'")),
     };
 
@@ -836,6 +872,7 @@ fn start_streaming_transcription(
         preview,
         vad_bin: state.funasr_vad_bin.clone(),
         vad_gguf,
+        cloud: cloud_asr_config(&state).ok(),
         scratch_dir,
         stop: Arc::clone(&stop),
     };
@@ -897,6 +934,35 @@ struct LlmSettings {
     preset: String,
     auto_format: bool,
     presets: Vec<PresetInfo>,
+}
+
+fn cloud_asr_config(state: &AppState) -> Result<asr_cloud::CloudAsrConfig, String> {
+    Ok(asr_cloud::CloudAsrConfig {
+        base_url: setting_value(state, "asr.cloud.baseUrl")?.unwrap_or_default(),
+        model: setting_value(state, "asr.cloud.model")?.unwrap_or_default(),
+        api_key: keyring::Entry::new(LLM_KEYRING_SERVICE, CLOUD_ASR_KEYRING_USER)
+            .ok()
+            .and_then(|entry| entry.get_password().ok())
+            .unwrap_or_default(),
+        language: setting_value(state, "asr.cloud.language")?.unwrap_or_default(),
+    })
+}
+
+/// Store or clear the cloud ASR key. Kept separate from the LLM key because
+/// the two endpoints are often different providers.
+#[tauri::command]
+fn set_cloud_asr_api_key(key: Option<String>) -> Result<(), String> {
+    let entry = keyring::Entry::new(LLM_KEYRING_SERVICE, CLOUD_ASR_KEYRING_USER)
+        .map_err(|err| err.to_string())?;
+    match key.filter(|value| !value.trim().is_empty()) {
+        Some(value) => entry
+            .set_password(value.trim())
+            .map_err(|err| format!("Could not save the key: {err}")),
+        None => match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(err) => Err(format!("Could not clear the key: {err}")),
+        },
+    }
 }
 
 fn keyring_entry() -> Result<keyring::Entry, String> {
@@ -1623,6 +1689,7 @@ fn prepare_asr_job(
         retain_audio: setting_bool(state, "audio.retain").unwrap_or(false),
         funasr_cli_bin: state.funasr_cli_bin.clone(),
         funasr_sensevoice_bin: state.funasr_sensevoice_bin.clone(),
+        cloud: cloud_asr_config(state).ok(),
     })
 }
 
@@ -1634,6 +1701,11 @@ fn run_asr_job(job: AsrJob) -> AsrJobOutput {
         BACKEND_SENSEVOICE => {
             transcribe_with_sensevoice(&job.funasr_sensevoice_bin, &job.model, &job.audio_path)
         }
+        BACKEND_CLOUD => match job.cloud.as_ref() {
+            Some(config) => asr_cloud::transcribe(config, &job.audio_path)
+                .map(|text| (text, BACKEND_CLOUD.to_string())),
+            None => Err("Cloud ASR is selected but not configured.".to_string()),
+        },
         other => Err(format!(
             "Unknown ASR backend '{other}'. Pick Fun-ASR-Nano or SenseVoiceSmall in settings."
         )),
@@ -1965,6 +2037,7 @@ pub fn run() {
             stop_push_to_talk,
             get_llm_settings,
             set_llm_api_key,
+            set_cloud_asr_api_key,
             format_transcript,
             get_bootstrap,
             complete_onboarding,
@@ -2098,7 +2171,7 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
 
     // Both models run on the official llama.cpp CPU runtime. `local_path` is a
     // directory now, not a single file, because each model is several GGUFs.
-    let catalog: [(&str, &str, &str, &str); 2] = [
+    let catalog: [(&str, &str, &str, &str); 3] = [
         (
             "fun-asr-nano-2512",
             "Fun-ASR-Nano (accurate)",
@@ -2110,6 +2183,12 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
             "SenseVoiceSmall (fast)",
             BACKEND_SENSEVOICE,
             "FunAudioLLM/SenseVoiceSmall-GGUF",
+        ),
+        (
+            "cloud-asr",
+            "Cloud transcription (most accurate)",
+            BACKEND_CLOUD,
+            "OpenAI-compatible /v1/audio/transcriptions",
         ),
     ];
     for (id, name, backend, repo_id) in catalog {
@@ -2140,7 +2219,18 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
                 END,
                 last_error = NULL
             "#,
-            params![id, name, backend, "huggingface", repo_id, local_path, "available"],
+            params![
+                id,
+                name,
+                backend,
+                if backend == BACKEND_CLOUD { "remote" } else { "huggingface" },
+                repo_id,
+                local_path,
+                // The cloud backend has nothing to fetch; it is ready as soon
+                // as it is configured, so it must not sit in the UI forever
+                // showing a Download button that cannot do anything.
+                if backend == BACKEND_CLOUD { "installed" } else { "available" }
+            ],
         )?;
     }
 

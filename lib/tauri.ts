@@ -66,6 +66,10 @@ export async function getLlmSettings(): Promise<LlmSettings> {
   return invokeCommand<LlmSettings>("get_llm_settings");
 }
 
+export async function setCloudAsrApiKey(key: string | null): Promise<void> {
+  await invokeCommand("set_cloud_asr_api_key", { key });
+}
+
 export async function setLlmApiKey(key: string | null): Promise<void> {
   await invokeCommand("set_llm_api_key", { key });
 }
