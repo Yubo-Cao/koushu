@@ -1851,12 +1851,34 @@ fn show_voice_bar(app: AppHandle) -> Result<(), String> {
 /// point is to paste back into that application afterwards. Calling
 /// `set_focus()` here — as `show_voice_bar` does for the manual case — would
 /// steal focus mid-utterance and break the paste target.
+/// Set once the compositor blur has been requested, so it is attempted after
+/// the window exists but never re-requested on every show.
+static BLUR_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[tauri::command]
 fn show_voice_bar_passive(app: AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("voice-bar")
         .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
-    window.show().map_err(|err| err.to_string())
+    window.show().map_err(|err| err.to_string())?;
+
+    // Compositor-side blur needs a realized surface, which does not exist
+    // during setup(). CSS backdrop-filter cannot substitute: it samples the
+    // page's own compositing result, and behind a transparent pill-sized
+    // window there is nothing there — that is why the bar could only ever look
+    // like painted gradients before.
+    if !BLUR_REQUESTED.swap(true, Ordering::SeqCst) {
+        match panel::enable_background_blur(&window) {
+            Ok(()) => eprintln!("[voice-bar] background blur enabled"),
+            Err(err) => {
+                eprintln!("[voice-bar] background blur unavailable: {err}");
+                // Allow a later attempt; the surface may simply not be mapped
+                // yet on this first show.
+                BLUR_REQUESTED.store(false, Ordering::SeqCst);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Where the bar and the cursor were when a drag began. Positions are derived

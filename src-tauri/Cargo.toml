@@ -40,6 +40,12 @@ evdev = "0.13"
 # gtk 0.18 that Tauri itself links, or there would be two incompatible GTKs.
 # v0_6 gates is_supported() and set_keyboard_mode(); system lib is 0.10.
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
+# Compositor-side background blur for the voice bar. backdrop-filter cannot do
+# this: CSS only samples the page's own compositing result, never the desktop.
+#  binds libwayland so GTK's existing display/surface can be adopted;
+# the pure-Rust backend cannot take foreign pointers.
+wayland-client = { version = "0.31", features = ["system"] }
+wayland-protocols = { version = "0.32", features = ["staging", "client"] }
 gtk = "0.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]

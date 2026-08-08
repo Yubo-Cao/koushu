@@ -14,6 +14,8 @@
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "linux")]
+mod blur;
+#[cfg(target_os = "linux")]
 mod linux_layer;
 #[cfg(target_os = "macos")]
 mod macos_panel;
@@ -138,6 +140,21 @@ pub fn fallback_position(
     margin: i32,
 ) -> Result<PanelStatus, String> {
     fallback_position_sized(window, anchor, margin, None)
+}
+
+/// Ask the compositor to blur the desktop behind a window.
+///
+/// Best-effort: returns the reason on failure so it can be reported once,
+/// never retried in a loop.
+#[cfg(target_os = "linux")]
+pub fn enable_background_blur(window: &tauri::WebviewWindow) -> Result<(), String> {
+    blur::enable_for(window)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn enable_background_blur(_window: &tauri::WebviewWindow) -> Result<(), String> {
+    // macOS gets this from the NSVisualEffectView side instead.
+    Ok(())
 }
 
 /// Logical geometry of the output the window is on, plus the window's own
