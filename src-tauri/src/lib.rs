@@ -1780,6 +1780,49 @@ fn show_voice_bar_passive(app: AppHandle) -> Result<(), String> {
     window.show().map_err(|err| err.to_string())
 }
 
+/// Snap the voice bar to whichever screen edge it currently sits nearest.
+///
+/// Deliberately computed in Rust from the window's own position and its
+/// current monitor. Doing it in the webview used `window.screen`, which
+/// reports only the primary display — on a multi-monitor desk every drag
+/// resolved to the same corner regardless of where the pill actually was.
+#[tauri::command]
+fn snap_voice_bar(app: AppHandle, margin: Option<i32>) -> Result<String, String> {
+    let window = app
+        .get_webview_window("voice-bar")
+        .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
+    let monitor = window
+        .current_monitor()
+        .map_err(|err| err.to_string())?
+        .or(window.primary_monitor().map_err(|err| err.to_string())?)
+        .ok_or_else(|| "No monitor found for the voice bar.".to_string())?;
+
+    let screen = monitor.size();
+    let origin = monitor.position();
+    let position = window.outer_position().map_err(|err| err.to_string())?;
+    let size = window.outer_size().map_err(|err| err.to_string())?;
+
+    // Centre of the pill, relative to the monitor it is on.
+    let cx = (position.x - origin.x) as f64 + size.width as f64 / 2.0;
+    let cy = (position.y - origin.y) as f64 + size.height as f64 / 2.0;
+    let w = screen.width as f64;
+    let h = screen.height as f64;
+
+    let vertical = if cy < h / 2.0 { "top" } else { "bottom" };
+    let horizontal = if cx < w / 3.0 {
+        "left"
+    } else if cx > w * 2.0 / 3.0 {
+        "right"
+    } else {
+        "center"
+    };
+    let name = format!("{vertical}-{horizontal}");
+    let target = panel::PanelAnchor::parse(&name)
+        .ok_or_else(|| format!("Unknown panel anchor '{name}'."))?;
+    panel::anchor(&window, target, margin.unwrap_or(18), true)?;
+    Ok(name)
+}
+
 /// Resize the voice bar to fit its content.
 ///
 /// The bar is a pill that grows only as much as its current state needs, so
@@ -1812,7 +1855,7 @@ fn anchor_voice_bar(
         .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
     let anchor = panel::PanelAnchor::parse(&anchor)
         .ok_or_else(|| format!("Unknown panel anchor '{anchor}'."))?;
-    panel::anchor(&window, anchor, margin.unwrap_or(16))
+    panel::anchor(&window, anchor, margin.unwrap_or(16), true)
 }
 
 #[tauri::command]
@@ -1900,7 +1943,7 @@ pub fn run() {
             // must claim the surface before the GTK window is realized, which
             // is why the window is declared `visible: false` in the config.
             if let Some(bar) = app.get_webview_window("voice-bar") {
-                match panel::anchor(&bar, panel::PanelAnchor::BottomCenter, 24) {
+                match panel::anchor(&bar, panel::PanelAnchor::BottomCenter, 24, true) {
                     Ok(status) => eprintln!(
                         "[voice-bar] anchored (layer_shell={}): {}",
                         status.layer_shell, status.detail
@@ -1942,6 +1985,7 @@ pub fn run() {
             show_voice_bar_passive,
             anchor_voice_bar,
             resize_voice_bar,
+            snap_voice_bar,
             hide_voice_bar,
             show_settings_window
         ])

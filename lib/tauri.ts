@@ -104,6 +104,11 @@ export async function resizeVoiceBar(width: number, height: number): Promise<voi
   await invokeCommand("resize_voice_bar", { width, height });
 }
 
+/** Snap to the nearest edge of the monitor the bar is actually on. */
+export async function snapVoiceBar(margin?: number): Promise<string> {
+  return invokeCommand<string>("snap_voice_bar", { margin });
+}
+
 export async function anchorVoiceBar(
   anchor: string,
   margin?: number,

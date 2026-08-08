@@ -69,13 +69,30 @@ pub struct PanelStatus {
     pub detail: String,
 }
 
-/// Anchor the given window. Falls back to manual positioning when a real panel
-/// is not available, and says so in the returned status rather than pretending.
+/// Anchor the given window.
+///
+/// `draggable` picks between two genuinely different window kinds, and the
+/// choice is a real trade-off rather than an implementation detail:
+///
+/// - `false` uses wlr-layer-shell on Wayland: a true overlay panel that no
+///   window can cover, but one the compositor positions from its anchor. Such
+///   a surface has no toplevel-move request, so it can never follow a cursor.
+/// - `true` uses an ordinary always-on-top window, which can be dragged
+///   natively and snapped to an edge afterwards, at the cost of being
+///   occludable by fullscreen windows.
+///
+/// Dragging is the more valuable of the two for a bar the user is expected to
+/// reposition, so it is the default.
 pub fn anchor(
     window: &tauri::WebviewWindow,
     anchor: PanelAnchor,
     margin: i32,
+    draggable: bool,
 ) -> Result<PanelStatus, String> {
+    if draggable {
+        return fallback_position(window, anchor, margin);
+    }
+
     #[cfg(target_os = "linux")]
     {
         match linux_layer::anchor(window, anchor, margin) {
@@ -115,10 +132,20 @@ pub fn fallback_position(
     anchor: PanelAnchor,
     margin: i32,
 ) -> Result<PanelStatus, String> {
+    // An unmapped window has no current monitor yet — this runs at startup,
+    // before the bar has ever been shown — so fall back through the primary
+    // display and finally any known display rather than failing outright.
     let monitor = window
         .current_monitor()
-        .map_err(|err| err.to_string())?
-        .or(window.primary_monitor().map_err(|err| err.to_string())?)
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .or_else(|| {
+            window
+                .available_monitors()
+                .ok()
+                .and_then(|list| list.into_iter().next())
+        })
         .ok_or_else(|| "No monitor found for the voice bar.".to_string())?;
 
     let screen = monitor.size();

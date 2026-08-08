@@ -1,10 +1,9 @@
 "use client";
 
 import { Loader2, Mic, Square } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DEFAULT_BACKEND } from "@/lib/backends";
 import {
-  anchorVoiceBar,
   autoPasteText,
   createSession,
   getAudioLevel,
@@ -12,6 +11,7 @@ import {
   listAudioInputs,
   resizeVoiceBar,
   showVoiceBarPassive,
+  snapVoiceBar,
   startAudioCapture,
   startPushToTalk,
   startStreamingTranscription,
@@ -35,20 +35,6 @@ function joinPreview(segments: string[], partial: string): string {
 }
 
 type Phase = "idle" | "listening" | "transcribing" | "done";
-
-/**
- * Pick the screen edge a drag ended nearest to.
- *
- * A layer-shell surface has no free-floating position — the compositor places
- * it from its anchor — so "drag it anywhere" is something this window can
- * never honour. Snapping to the nearest edge is the honest version of that
- * gesture, and is why dragging previously appeared to do nothing.
- */
-function nearestAnchor(x: number, y: number, w: number, h: number): string {
-  const vertical = y < h / 2 ? "top" : "bottom";
-  const horizontal = x < w / 3 ? "left" : x > (w * 2) / 3 ? "right" : "center";
-  return `${vertical}-${horizontal}`;
-}
 
 export default function VoiceBar() {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -230,23 +216,31 @@ export default function VoiceBar() {
     }
   }
 
-  const onDragEnd = useCallback((event: MouseEvent) => {
-    setDragging(false);
-    const next = nearestAnchor(
-      event.screenX,
-      event.screenY,
-      window.screen.width,
-      window.screen.height,
-    );
-    setAnchor(next);
-    void anchorVoiceBar(next, 18).catch(() => {});
-  }, []);
-
+  // startDragging() hands the gesture to the compositor, so no mousemove or
+  // mouseup arrives here — the drag ends when the pointer is released
+  // somewhere we never see. Poll briefly for the button coming back up, then
+  // let Rust snap using the real monitor geometry.
   useEffect(() => {
     if (!dragging) return;
-    window.addEventListener("mouseup", onDragEnd);
-    return () => window.removeEventListener("mouseup", onDragEnd);
-  }, [dragging, onDragEnd]);
+    let stopped = false;
+    const finish = () => {
+      if (stopped) return;
+      stopped = true;
+      setDragging(false);
+      void snapVoiceBar(18)
+        .then(setAnchor)
+        .catch(() => {});
+    };
+    const onUp = () => finish();
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("blur", onUp);
+    const timer = window.setTimeout(finish, 4000);
+    return () => {
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("blur", onUp);
+      window.clearTimeout(timer);
+    };
+  }, [dragging]);
 
   const level = Math.max(0, Math.min(100, inputLevel.percent));
 
@@ -257,20 +251,24 @@ export default function VoiceBar() {
     >
       <div
         ref={shellRef}
-        // Suppress the browser's native drag: starting an HTML5 drag on a
-        // layer-shell surface is not something the compositor can service, and
-        // it took the window down with it.
+        // Native window drag, so the pill actually follows the cursor. An
+        // HTML5 drag would not move the window at all, so it stays suppressed.
         draggable={false}
         onDragStart={(event) => event.preventDefault()}
-        onMouseDown={(event) => {
-          if (event.button === 0) {
-            event.preventDefault();
-            setDragging(true);
+        onMouseDown={async (event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          setDragging(true);
+          try {
+            const { getCurrentWindow } = await import("@tauri-apps/api/window");
+            await getCurrentWindow().startDragging();
+          } catch {
+            /* dragging is a nicety; never let it break the bar */
           }
         }}
         className={[
           "inline-flex select-none items-center gap-2 rounded-full border border-black/10",
-          "bg-paper/95 py-1.5 pl-1.5 pr-3 shadow-lg",
+          "bg-paper/95 py-1.5 pl-1.5 pr-3",
           dragging ? "cursor-grabbing" : "cursor-grab",
         ].join(" ")}
         title={`${hotkey?.trigger ?? ""} · drag to an edge to dock · ${anchor}`}
