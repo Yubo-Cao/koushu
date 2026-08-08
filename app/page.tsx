@@ -13,6 +13,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/Button";
 import { DownloadProgress } from "@/components/DownloadProgress";
+import { Confetti } from "@/components/Confetti";
 import { SetupView } from "@/components/SetupView";
 import { DEFAULT_BACKEND } from "@/lib/backends";
 import {
@@ -70,6 +71,9 @@ export default function Home() {
   const [partial, setPartial] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [download, setDownload] = useState<ModelDownloadState | null>(null);
+  // Fired once, when the very first transcript lands — the moment the app
+  // stops being a promise and starts being a tool.
+  const [celebrate, setCelebrate] = useState(false);
   const recordingSessionIdRef = useRef<string | null>(null);
   const segmentsRef = useRef<string[]>([]);
   const [llm, setLlm] = useState<LlmSettings | null>(null);
@@ -331,6 +335,7 @@ export default function Home() {
         setTranscripts((current) => [...current, result.transcript as TranscriptInfo]);
         setPartial("");
       }
+      if (result.trial?.firstTranscript) setCelebrate(true);
       setStatus(result.error || "Saved");
     } catch (error) {
       setStatus(String(error));
@@ -372,7 +377,9 @@ export default function Home() {
       that merely reserves space would look the same standing still and dead in
       motion.
     */
-    <main className="grid h-dvh min-h-0 grid-cols-[254px_minmax(0,1fr)] lg:grid-cols-[282px_minmax(0,1fr)]">
+    <>
+      <Confetti fire={celebrate} onDone={() => setCelebrate(false)} />
+      <main className="grid h-dvh min-h-0 grid-cols-[254px_minmax(0,1fr)] lg:grid-cols-[282px_minmax(0,1fr)]">
       <aside className="hairline-r relative min-h-0">
         <div className="scrollbar-thin absolute inset-0 flex flex-col overflow-y-auto">
           <div className="glass-chrome sticky top-0 z-20 px-4 pt-4 pb-3">
@@ -605,7 +612,8 @@ export default function Home() {
           </footer>
         </div>
       </section>
-    </main>
+      </main>
+    </>
   );
 }
 

@@ -709,3 +709,18 @@ body:has(main[data-transparent="true"]) {
     transform: none;
   }
 }
+
+/*
+ * Confetti. Transform and opacity only, so it stays on the compositor and does
+ * not force layout while the app is otherwise busy transcribing.
+ */
+@keyframes confetti-fall {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--drift, 0), 108vh, 0) rotate(var(--spin, 360deg));
+    opacity: 0;
+  }
+}

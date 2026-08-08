@@ -10,6 +10,7 @@ import {
   downloadModelWithProgress,
   getBootstrap,
   getLlmSettings,
+  getTrialStatus,
   setCloudAsrApiKey,
   setLlmApiKey,
   pauseModelDownload,
@@ -22,6 +23,7 @@ import type {
   ModelDownloadEvent,
   ModelDownloadState,
   ModelInfo,
+  TrialStatus,
 } from "@/lib/types";
 import { languages } from "@/lib/types";
 
@@ -74,12 +76,14 @@ export default function SettingsPage() {
   const [asrModel, setAsrModel] = useState("");
   const [asrLanguage, setAsrLanguage] = useState("");
   const [asrKeyDraft, setAsrKeyDraft] = useState("");
+  const [trial, setTrial] = useState<TrialStatus | null>(null);
 
   useEffect(() => {
     refresh();
   }, []);
 
   function refresh() {
+    getTrialStatus().then(setTrial).catch(() => setTrial(null));
     getLlmSettings()
       .then((settings) => {
         setLlm(settings);
@@ -305,6 +309,38 @@ export default function SettingsPage() {
         </section>
 
         <aside className="space-y-4">
+          <Panel title="Trial">
+            {trial?.licensed ? (
+              <p className="t-body text-[13px] text-smoke">
+                Licensed. Thank you — that genuinely funds this.
+              </p>
+            ) : trial ? (
+              <>
+                <div className="mb-2 flex items-baseline justify-between">
+                  <span className="t-title text-[15px] font-semibold">
+                    {Math.floor(trial.usedSeconds / 60)} min
+                  </span>
+                  <span className="text-[12px] text-smoke">
+                    of {Math.round(trial.limitSeconds / 60)} min
+                  </span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-pill bg-fill">
+                  <div
+                    className="h-full rounded-pill bg-accent transition-all"
+                    style={{
+                      width: `${Math.min(100, (trial.usedSeconds / trial.limitSeconds) * 100)}%`,
+                    }}
+                  />
+                </div>
+                <p className="t-body mt-3 text-[12px] leading-5 text-smoke">
+                  Counts speech detected by VAD, not how long you held the key.
+                  Local transcription keeps working; this only tracks the free
+                  build&rsquo;s budget.
+                </p>
+              </>
+            ) : null}
+          </Panel>
+
           <Panel title="Runtime">
             <div className="mb-4 flex items-center gap-2 text-sm">
               <Cpu size={16} className={bootstrap.platform.bundled_asr ? "text-moss" : "text-rust"} />

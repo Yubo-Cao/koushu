@@ -14,6 +14,7 @@ import type {
   PushToTalkEvent,
   HotkeyStatus,
   StreamingEvent,
+  TrialStatus,
   SessionInfo,
   TranscriptInfo,
 } from "@/lib/types";
@@ -60,6 +61,10 @@ export async function createSession(input: {
 
 export async function setSetting(key: string, value: string): Promise<void> {
   await invokeCommand("set_setting", { key, value });
+}
+
+export async function getTrialStatus(): Promise<TrialStatus> {
+  return invokeCommand<TrialStatus>("get_trial_status");
 }
 
 export async function getLlmSettings(): Promise<LlmSettings> {

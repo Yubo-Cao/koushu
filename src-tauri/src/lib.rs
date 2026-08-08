@@ -315,6 +315,9 @@ struct AsrJob {
     retain_audio: bool,
     funasr_cli_bin: PathBuf,
     funasr_sensevoice_bin: PathBuf,
+    funasr_vad_bin: PathBuf,
+    /// Where to find fsmn-vad.gguf when the selected model has no local files.
+    vad_gguf_dir: Option<PathBuf>,
     cloud: Option<asr_cloud::CloudAsrConfig>,
 }
 
@@ -325,10 +328,13 @@ struct AsrJobOutput {
     language: String,
     save_final: bool,
     transcription: Result<(String, String), String>,
+    /// Speech seconds found by VAD in this recording, for trial metering.
+    vad_seconds: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
 struct AsrResult {
+    trial: Option<TrialStatus>,
     session_id: String,
     transcript: Option<TranscriptInfo>,
     text: String,
@@ -895,6 +901,63 @@ fn start_streaming_transcription(
         join: Some(join),
     });
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Trial metering
+//
+// The free build is fully functional for a fixed budget of *transcribed
+// speech*. Two deliberate choices, both recorded in docs/monetisation.md:
+//
+//   - Seconds, not words. Chinese has no word boundary, so a word cap means
+//     something entirely different depending on the language spoken.
+//   - VAD speech, not capture length. Holding the key while thinking should
+//     not spend the trial.
+//
+// This counter lives in the client and can be removed by rebuilding, which is
+// stated plainly rather than obfuscated. What is sold is not access — the
+// source is public — but not having to do that work.
+// ---------------------------------------------------------------------------
+
+const TRIAL_LIMIT_SECONDS: f64 = 120.0 * 60.0;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrialStatus {
+    used_seconds: f64,
+    limit_seconds: f64,
+    licensed: bool,
+    /// True the first time a transcript is produced, so the UI can mark the
+    /// moment rather than having to guess at it.
+    first_transcript: bool,
+}
+
+/// Add speech time to the trial counter and report the new state.
+fn record_trial_usage(state: &AppState, speech_seconds: f64) -> Result<TrialStatus, String> {
+    let used = setting_value(state, "trial.speechSeconds")?
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let first = used == 0.0 && speech_seconds > 0.0;
+    let total = used + speech_seconds.max(0.0);
+    set_setting_inner(state, "trial.speechSeconds", &format!("{total:.3}"))?;
+    Ok(TrialStatus {
+        used_seconds: total,
+        limit_seconds: TRIAL_LIMIT_SECONDS,
+        licensed: setting_value(state, "trial.licenseKey")?.is_some(),
+        first_transcript: first,
+    })
+}
+
+#[tauri::command]
+fn get_trial_status(state: tauri::State<'_, AppState>) -> Result<TrialStatus, String> {
+    Ok(TrialStatus {
+        used_seconds: setting_value(&state, "trial.speechSeconds")?
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(0.0),
+        limit_seconds: TRIAL_LIMIT_SECONDS,
+        licensed: setting_value(&state, "trial.licenseKey")?.is_some(),
+        first_transcript: false,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1696,6 +1759,10 @@ fn prepare_asr_job(
         retain_audio: setting_bool(state, "audio.retain").unwrap_or(false),
         funasr_cli_bin: state.funasr_cli_bin.clone(),
         funasr_sensevoice_bin: state.funasr_sensevoice_bin.clone(),
+        funasr_vad_bin: state.funasr_vad_bin.clone(),
+        vad_gguf_dir: ["fun-asr-nano-2512", "sensevoice-small"]
+            .iter()
+            .find_map(|id| get_model(state, id).ok().and_then(|m| gguf_model_dir(&m).ok())),
         cloud: cloud_asr_config(state).ok(),
     })
 }
@@ -1718,6 +1785,29 @@ fn run_asr_job(job: AsrJob) -> AsrJobOutput {
         )),
     };
 
+    // Measure speech before the audio is discarded. Only on success: a failed
+    // transcription should not spend the trial.
+    let vad_seconds = if transcription.is_ok() {
+        gguf_model_dir(&job.model)
+            .ok()
+            .or_else(|| {
+                // The cloud backend has no directory of its own; VAD still runs
+                // locally, from whichever local model is installed.
+                job.vad_gguf_dir.clone()
+            })
+            .map(|dir| dir.join("fsmn-vad.gguf"))
+            .filter(|path| path.exists())
+            .and_then(|vad| run_vad(&job.funasr_vad_bin, &vad, &job.audio_path).ok())
+            .map(|spans| {
+                spans
+                    .iter()
+                    .map(|(start, end)| (end.saturating_sub(*start)) as f64 / 1000.0)
+                    .sum()
+            })
+    } else {
+        None
+    };
+
     if !job.retain_audio {
         let _ = fs::remove_file(&job.audio_path);
     }
@@ -1729,6 +1819,7 @@ fn run_asr_job(job: AsrJob) -> AsrJobOutput {
         language: job.language,
         save_final: job.save_final,
         transcription,
+        vad_seconds,
     }
 }
 
@@ -1749,7 +1840,14 @@ fn finish_asr_job(state: &AppState, output: AsrJobOutput) -> Result<AsrResult, S
             } else {
                 None
             };
+            // Meter the speech actually detected, not how long the key was
+            // held. A VAD pass here costs ~95 ms for 30 s of audio.
+            let speech = output
+                .vad_seconds
+                .unwrap_or(0.0);
+            let trial = record_trial_usage(state, speech).ok();
             Ok(AsrResult {
+                trial,
                 session_id: output.session_id,
                 transcript,
                 text,
@@ -1758,6 +1856,7 @@ fn finish_asr_job(state: &AppState, output: AsrJobOutput) -> Result<AsrResult, S
             })
         }
         Err(err) => Ok(AsrResult {
+            trial: None,
             session_id: output.session_id,
             transcript: None,
             text: String::new(),
@@ -2252,6 +2351,7 @@ pub fn run() {
             stop_streaming_transcription,
             start_push_to_talk,
             stop_push_to_talk,
+            get_trial_status,
             get_llm_settings,
             set_llm_api_key,
             set_cloud_asr_api_key,

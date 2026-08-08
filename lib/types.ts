@@ -57,6 +57,7 @@ export type Bootstrap = {
 };
 
 export type AsrResult = {
+  trial?: TrialStatus | null;
   session_id: string;
   transcript?: TranscriptInfo | null;
   text: string;
@@ -213,3 +214,12 @@ export type FormatEvent =
   | { event: "delta"; data: { text: string } }
   | { event: "done"; data: { text: string } }
   | { event: "error"; data: { error: string } };
+
+/** Trial metering. Counts VAD-detected speech, not how long the key was held. */
+export type TrialStatus = {
+  usedSeconds: number;
+  limitSeconds: number;
+  licensed: boolean;
+  /** Set once, on the first transcript ever produced. */
+  firstTranscript: boolean;
+};
