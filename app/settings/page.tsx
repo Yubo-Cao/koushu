@@ -9,12 +9,15 @@ import { formatBytes } from "@/lib/format";
 import {
   downloadModelWithProgress,
   getBootstrap,
+  getLlmSettings,
+  setLlmApiKey,
   pauseModelDownload,
   resetOnboarding,
   setSetting,
 } from "@/lib/tauri";
 import type {
   Bootstrap,
+  LlmSettings,
   ModelDownloadEvent,
   ModelDownloadState,
   ModelInfo,
@@ -30,12 +33,26 @@ export default function SettingsPage() {
   const [retainAudio, setRetainAudio] = useState(false);
   const [autoPaste, setAutoPaste] = useState(true);
   const [download, setDownload] = useState<ModelDownloadState | null>(null);
+  const [llm, setLlm] = useState<LlmSettings | null>(null);
+  const [llmBaseUrl, setLlmBaseUrl] = useState("");
+  const [llmModel, setLlmModel] = useState("");
+  const [llmPreset, setLlmPreset] = useState("typeset");
+  // Never populated from the backend; the stored key is write-only from here.
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
 
   useEffect(() => {
     refresh();
   }, []);
 
   function refresh() {
+    getLlmSettings()
+      .then((settings) => {
+        setLlm(settings);
+        setLlmBaseUrl(settings.baseUrl);
+        setLlmModel(settings.model);
+        setLlmPreset(settings.preset);
+      })
+      .catch(() => setLlm(null));
     getBootstrap()
       .then((data) => {
         setBootstrap(data);
@@ -126,6 +143,15 @@ export default function SettingsPage() {
       await setSetting("defaults.runtime", selectedModel?.backend || DEFAULT_BACKEND);
       await setSetting("audio.retain", retainAudio ? "true" : "false");
       await setSetting("floating.autoPaste", autoPaste ? "true" : "false");
+      await setSetting("llm.baseUrl", llmBaseUrl.trim());
+      await setSetting("llm.model", llmModel.trim());
+      await setSetting("llm.preset", llmPreset);
+      // Empty draft means "leave the stored key alone"; clearing is explicit.
+      if (apiKeyDraft.trim()) {
+        await setLlmApiKey(apiKeyDraft.trim());
+        setApiKeyDraft("");
+      }
+      setLlm(await getLlmSettings());
       setMessage("Settings saved.");
     } catch (error) {
       setMessage(String(error));
@@ -251,6 +277,72 @@ export default function SettingsPage() {
             </p>
           </Panel>
 
+          <Panel title="Markdown formatting">
+            <p className="mb-3 text-sm leading-5 text-smoke">
+              Optional. Any OpenAI-compatible endpoint works, including a local
+              server. Transcripts are kept as spoken; the formatted version is
+              stored alongside them.
+            </p>
+            <div className="space-y-3">
+              <Field label="Base URL">
+                <input
+                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  placeholder="http://localhost:11434/v1"
+                  value={llmBaseUrl}
+                  onChange={(event) => setLlmBaseUrl(event.target.value)}
+                />
+              </Field>
+              <Field label="Model">
+                <input
+                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  placeholder="qwen2.5:7b"
+                  value={llmModel}
+                  onChange={(event) => setLlmModel(event.target.value)}
+                />
+              </Field>
+              <Field label={llm?.hasApiKey ? "API key (stored)" : "API key"}>
+                <input
+                  type="password"
+                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  placeholder={llm?.hasApiKey ? "Leave blank to keep" : "Optional for local servers"}
+                  value={apiKeyDraft}
+                  onChange={(event) => setApiKeyDraft(event.target.value)}
+                />
+              </Field>
+              {llm?.hasApiKey ? (
+                <Button
+                  className="w-full"
+                  onClick={async () => {
+                    await setLlmApiKey(null);
+                    setLlm(await getLlmSettings());
+                    setMessage("API key cleared.");
+                  }}
+                >
+                  Clear stored key
+                </Button>
+              ) : null}
+              <Field label="Preset">
+                <select
+                  className="h-9 w-full rounded-md border border-line bg-paper px-2 text-sm outline-none focus:border-cobalt"
+                  value={llmPreset}
+                  onChange={(event) => setLlmPreset(event.target.value)}
+                >
+                  {(llm?.presets || []).map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <p className="text-xs leading-5 text-smoke">
+                {llm?.presets.find((preset) => preset.id === llmPreset)?.description}
+              </p>
+            </div>
+            <p className="mt-3 text-xs leading-5 text-smoke">
+              The key is stored in the system keychain, not in the app database.
+            </p>
+          </Panel>
+
           <Panel title="Storage">
             <Toggle label="Retain audio files" checked={retainAudio} onChange={setRetainAudio} />
             <Toggle label="Floating bar auto-paste" checked={autoPaste} onChange={setAutoPaste} />
@@ -306,6 +398,15 @@ function Toggle({
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
       />
+    </label>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-medium text-smoke">{label}</span>
+      {children}
     </label>
   );
 }

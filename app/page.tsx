@@ -18,6 +18,8 @@ import { DEFAULT_BACKEND } from "@/lib/backends";
 import {
   copyText,
   createSession,
+  formatTranscript,
+  getLlmSettings,
   downloadModelWithProgress,
   getAudioLevel,
   getBootstrap,
@@ -35,6 +37,7 @@ import {
 } from "@/lib/tauri";
 import type {
   AudioInputInfo,
+  LlmSettings,
   StreamingEvent,
   AudioLevelInfo,
   Bootstrap,
@@ -69,6 +72,10 @@ export default function Home() {
   const [download, setDownload] = useState<ModelDownloadState | null>(null);
   const recordingSessionIdRef = useRef<string | null>(null);
   const segmentsRef = useRef<string[]>([]);
+  const [llm, setLlm] = useState<LlmSettings | null>(null);
+  // Streaming Markdown per transcript while a format pass is in flight.
+  const [formatting, setFormatting] = useState<Record<string, string>>({});
+  const [formatError, setFormatError] = useState<Record<string, string>>({});
   const levelTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -82,6 +89,7 @@ export default function Home() {
       })
       .catch((error) => setStatus(String(error)));
     void refreshAudioInputs();
+    getLlmSettings().then(setLlm).catch(() => setLlm(null));
   }, []);
 
   useEffect(() => {
@@ -248,6 +256,33 @@ export default function Home() {
       setStatus(String(error));
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function runFormat(transcriptId: string, text: string) {
+    setFormatError((current) => ({ ...current, [transcriptId]: "" }));
+    setFormatting((current) => ({ ...current, [transcriptId]: "" }));
+    try {
+      await formatTranscript({ transcriptId, text }, (event) => {
+        if (event.event === "delta") {
+          setFormatting((current) => ({
+            ...current,
+            [transcriptId]: (current[transcriptId] || "") + event.data.text,
+          }));
+        } else if (event.event === "error") {
+          setFormatError((current) => ({ ...current, [transcriptId]: event.data.error }));
+        }
+      });
+      // Re-read so the stored formatted text becomes the source of truth.
+      if (activeSession) setTranscripts(await listTranscripts(activeSession.id));
+    } catch (error) {
+      setFormatError((current) => ({ ...current, [transcriptId]: String(error) }));
+    } finally {
+      setFormatting((current) => {
+        const next = { ...current };
+        delete next[transcriptId];
+        return next;
+      });
     }
   }
 
@@ -442,16 +477,52 @@ export default function Home() {
                       {new Date(transcript.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} -{" "}
                       {transcript.language}
                     </div>
-                    <Button
-                      variant="ghost"
-                      className="h-8 w-8 px-0"
-                      title="Copy"
-                      onClick={() => copyTranscript(transcript.text)}
-                    >
-                      <Copy size={15} />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        className="h-8 px-2 text-xs"
+                        title={llm?.baseUrl ? "Format as Markdown" : "Configure an LLM in Settings first"}
+                        disabled={!llm?.baseUrl || transcript.id in formatting}
+                        onClick={() => void runFormat(transcript.id, transcript.text)}
+                      >
+                        <Wand2 size={14} />
+                        <span className="ml-1">
+                          {transcript.id in formatting
+                            ? "Formatting"
+                            : transcript.formatted_text
+                              ? "Redo"
+                              : "Format"}
+                        </span>
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="h-8 w-8 px-0"
+                        title="Copy"
+                        onClick={() =>
+                          copyTranscript(transcript.formatted_text || transcript.text)
+                        }
+                      >
+                        <Copy size={15} />
+                      </Button>
+                    </div>
                   </div>
                   <p className="whitespace-pre-wrap text-[15px] leading-7">{transcript.text}</p>
+                  {transcript.id in formatting || transcript.formatted_text ? (
+                    <div className="mt-3 border-t border-line pt-3">
+                      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-moss">
+                        <Wand2 size={13} />
+                        {transcript.id in formatting
+                          ? "Formatting"
+                          : `Formatted · ${transcript.formatted_preset || "typeset"}`}
+                      </div>
+                      <p className="whitespace-pre-wrap text-[15px] leading-7">
+                        {formatting[transcript.id] ?? transcript.formatted_text}
+                      </p>
+                    </div>
+                  ) : null}
+                  {formatError[transcript.id] ? (
+                    <p className="mt-2 text-sm text-[#a43b2e]">{formatError[transcript.id]}</p>
+                  ) : null}
                 </article>
               ))}
               {partial ? (

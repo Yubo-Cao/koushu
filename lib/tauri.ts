@@ -8,6 +8,8 @@ import type {
   ModelInfo,
   ModelDownloadEvent,
   NativeAudioCaptureResult,
+  FormatEvent,
+  LlmSettings,
   PasteResult,
   PushToTalkEvent,
   HotkeyStatus,
@@ -58,6 +60,30 @@ export async function createSession(input: {
 
 export async function setSetting(key: string, value: string): Promise<void> {
   await invokeCommand("set_setting", { key, value });
+}
+
+export async function getLlmSettings(): Promise<LlmSettings> {
+  return invokeCommand<LlmSettings>("get_llm_settings");
+}
+
+export async function setLlmApiKey(key: string | null): Promise<void> {
+  await invokeCommand("set_llm_api_key", { key });
+}
+
+/** Stream a formatting pass. Resolves with the complete Markdown. */
+export async function formatTranscript(
+  input: { transcriptId?: string; text: string; preset?: string },
+  onEvent: (event: FormatEvent) => void,
+): Promise<string> {
+  const mod = await import("@tauri-apps/api/core");
+  const channel = new mod.Channel<FormatEvent>();
+  channel.onmessage = onEvent;
+  return mod.invoke<string>("format_transcript", {
+    transcriptId: input.transcriptId,
+    text: input.text,
+    preset: input.preset,
+    onEvent: channel,
+  });
 }
 
 export async function startPushToTalk(

@@ -42,6 +42,10 @@ export type TranscriptInfo = {
   duration_ms?: number | null;
   model: string;
   language: string;
+  /** LLM-typeset Markdown. The raw `text` above is never overwritten. */
+  formatted_text?: string | null;
+  formatted_preset?: string | null;
+  formatted_at?: string | null;
 };
 
 export type Bootstrap = {
@@ -187,3 +191,25 @@ export type HotkeyStatus = {
 };
 
 export type PushToTalkEvent = { event: "pressed" } | { event: "released" };
+
+export type FormatPreset = {
+  id: string;
+  label: string;
+  description: string;
+  prompt: string;
+};
+
+export type LlmSettings = {
+  baseUrl: string;
+  model: string;
+  /** Whether a key is stored. The key itself never crosses this boundary. */
+  hasApiKey: boolean;
+  preset: string;
+  autoFormat: boolean;
+  presets: FormatPreset[];
+};
+
+export type FormatEvent =
+  | { event: "delta"; data: { text: string } }
+  | { event: "done"; data: { text: string } }
+  | { event: "error"; data: { error: string } };
