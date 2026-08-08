@@ -1510,6 +1510,24 @@ fn show_settings_window(app: AppHandle) -> Result<(), String> {
 }
 
 pub fn run() {
+    // WebKitGTK's DMA-BUF renderer is broken on a number of Linux GPU and
+    // compositor combinations. On a KDE Wayland session with a hybrid
+    // Intel/NVIDIA laptop it does not degrade gracefully — it aborts window
+    // creation before anything is drawn:
+    //
+    //     Gdk-Message: Error 71 (protocol error) dispatching to Wayland display.
+    //
+    // Disabling it gives up a rendering fast path, not a feature. Forcing
+    // GDK_BACKEND=x11 is not an alternative: that trades this for repeated
+    // "Failed to create GBM buffer of size WxH" failures.
+    //
+    // An explicit value from the environment always wins, so anyone whose
+    // stack handles DMA-BUF correctly can set it back to 0.
+    #[cfg(target_os = "linux")]
+    if env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
