@@ -12,18 +12,6 @@
   "app": {
     "windows": [
       {
-        "label": "main",
-        "title": "Fun ASR Desktop",
-        "url": "/",
-        "width": 1240,
-        "height": 820,
-        "minWidth": 1040,
-        "minHeight": 700,
-        "center": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true
-      },
-      {
         "label": "voice-bar",
         "title": "Fun ASR Voice Bar",
         "url": "/bar",

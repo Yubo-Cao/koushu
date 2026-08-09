@@ -3,6 +3,7 @@ pub mod hotkey;
 pub mod license;
 pub mod llm;
 mod panel;
+mod tray;
 
 /// Test hook for `examples/ptt_probe.rs`: start a listener and hand back the
 /// resolved backend so the fallback chain can be exercised without the GUI.
@@ -1935,6 +1936,10 @@ async fn transcribe_audio_inner(
     request: TranscribeAudioRequest,
     save_final: bool,
 ) -> Result<AsrResult, String> {
+    // Held for the whole job so the tray can show that transcription is still
+    // running after the microphone has already closed — the part of the wait
+    // the user otherwise has no way to see.
+    let _tray_busy = tray::AsrJobGuard::new();
     let job = prepare_asr_job(state, request, save_final)?;
     let output = tauri::async_runtime::spawn_blocking(move || run_asr_job(job))
         .await
@@ -2221,6 +2226,15 @@ fn show_voice_bar_passive(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Inset between the voice bar and the screen edge it is docked to, in logical
+/// pixels.
+///
+/// One constant because a drag has to start from the position the bar is
+/// actually in. `begin_voice_bar_drag` reconstructs that from the dock and this
+/// margin, so a different value used when docking would make the bar jump by
+/// the difference the instant it was grabbed.
+const VOICE_BAR_MARGIN: i32 = 18;
+
 /// Where the bar and the cursor were when a drag began. Positions are derived
 /// from these, never accumulated.
 struct DragState {
@@ -2257,8 +2271,8 @@ fn cursor_position() -> Option<(f64, f64)> {
     Some((x?, y?))
 }
 
-/// Begin a drag: resolve where the bar currently is, in output-local logical
-/// pixels, and remember it as the running position.
+/// Begin a drag: resolve where the bar currently is, in global logical pixels,
+/// and remember it as the running position.
 #[tauri::command]
 fn begin_voice_bar_drag(app: AppHandle) -> Result<(), String> {
     let window = app
@@ -2272,18 +2286,23 @@ fn begin_voice_bar_drag(app: AppHandle) -> Result<(), String> {
         .map(|value| *value)
         .unwrap_or(panel::PanelAnchor::BottomCenter);
 
-    // Where the current anchor puts it, expressed as a free position.
-    let margin = 18.0;
-    let x = match anchor.horizontal() {
-        Some(true) => margin,
-        Some(false) => geom.width - geom.win_width - margin,
-        None => (geom.width - geom.win_width) / 2.0,
-    };
-    let y = if anchor.is_top() {
-        margin
-    } else {
-        geom.height - geom.win_height - margin
-    };
+    // Where the current anchor puts it, expressed as a free position on the
+    // desktop. The output's origin has to be added back in: on the second
+    // screen here that is (512, 1440), and leaving it out made the bar jump by
+    // exactly that much the moment a drag started.
+    let margin = VOICE_BAR_MARGIN as f64;
+    let x = geom.origin_x
+        + match anchor.horizontal() {
+            Some(true) => margin,
+            Some(false) => geom.width - geom.win_width - margin,
+            None => (geom.width - geom.win_width) / 2.0,
+        };
+    let y = geom.origin_y
+        + if anchor.is_top() {
+            margin
+        } else {
+            geom.height - geom.win_height - margin
+        };
 
     let cursor = cursor_position();
     if let Ok(mut slot) = app.state::<AppState>().voice_bar_drag.lock() {
@@ -2312,7 +2331,6 @@ fn track_voice_bar_drag(app: AppHandle) -> Result<(), String> {
     let Some((cx, cy)) = cursor_position() else {
         return Ok(());
     };
-    let geom = panel::output_geometry(&window)?;
     let state = app.state::<AppState>();
     let (x, y) = {
         let mut slot = state
@@ -2329,22 +2347,24 @@ fn track_voice_bar_drag(app: AppHandle) -> Result<(), String> {
             drag.cursor_y = cy;
             drag.have_cursor = true;
         }
-        let x = (drag.origin_x + (cx - drag.cursor_x))
-            .clamp(0.0, (geom.width - geom.win_width).max(0.0));
-        let y = (drag.origin_y + (cy - drag.cursor_y))
-            .clamp(0.0, (geom.height - geom.win_height).max(0.0));
-        (x, y)
+        // Deliberately unclamped: the cursor is in desktop coordinates and so
+        // is this, so the bar has to be allowed past the edge of one output to
+        // reach the next. `move_to` clamps against whichever output it lands
+        // on, which is the only place that knows which one that is.
+        (
+            drag.origin_x + (cx - drag.cursor_x),
+            drag.origin_y + (cy - drag.cursor_y),
+        )
     };
     panel::move_to(&window, x.round() as i32, y.round() as i32)
 }
 
-/// Finish a drag by snapping to the nearest edge of the current output.
+/// Finish a drag by snapping to the nearest edge of the output it ended on.
 #[tauri::command]
 fn end_voice_bar_drag(app: AppHandle) -> Result<String, String> {
     let window = app
         .get_webview_window("voice-bar")
         .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
-    let geom = panel::output_geometry(&window)?;
     let state = app.state::<AppState>();
     let position = state
         .voice_bar_drag
@@ -2363,67 +2383,76 @@ fn end_voice_bar_drag(app: AppHandle) -> Result<String, String> {
         return Ok("bottom-center".to_string());
     };
 
-    let cx = x + geom.win_width / 2.0;
-    let cy = y + geom.win_height / 2.0;
-    let vertical = if cy < geom.height / 2.0 { "top" } else { "bottom" };
-    let horizontal = if cx < geom.width / 3.0 {
-        "left"
-    } else if cx > geom.width * 2.0 / 3.0 {
-        "right"
-    } else {
-        "center"
-    };
-    let name = format!("{vertical}-{horizontal}");
+    // Read the output *after* the drag: the bar may have been handed to a
+    // different one on the way, and snapping it against the screen it started
+    // on would fling it back across the desk.
+    let geom = panel::output_geometry(&window)?;
+    let cx = x - geom.origin_x + geom.win_width / 2.0;
+    let cy = y - geom.origin_y + geom.win_height / 2.0;
+    let name = nearest_dock(cx, cy, geom.width, geom.height);
     let target = panel::PanelAnchor::parse(&name)
         .ok_or_else(|| format!("Unknown panel anchor '{name}'."))?;
-    panel::anchor(&window, target, 18, false)?;
+    panel::anchor(&window, target, VOICE_BAR_MARGIN, false)?;
     if let Ok(mut slot) = state.voice_bar_anchor.lock() {
         *slot = target;
     }
     Ok(name)
 }
 
+/// Which of the six docks a point in an output belongs to.
+///
+/// Thirds horizontally, halves vertically — the centre docks get the widest
+/// catchment because that is where the bar lives by default.
+fn nearest_dock(x: f64, y: f64, width: f64, height: f64) -> String {
+    let vertical = if y < height / 2.0 { "top" } else { "bottom" };
+    let horizontal = if x < width / 3.0 {
+        "left"
+    } else if x > width * 2.0 / 3.0 {
+        "right"
+    } else {
+        "center"
+    };
+    format!("{vertical}-{horizontal}")
+}
+
 /// Snap the voice bar to whichever screen edge it currently sits nearest.
 ///
-/// Deliberately computed in Rust from the window's own position and its
-/// current monitor. Doing it in the webview used `window.screen`, which
-/// reports only the primary display — on a multi-monitor desk every drag
-/// resolved to the same corner regardless of where the pill actually was.
+/// Deliberately computed in Rust from the bar's own position and the output it
+/// is on. Doing it in the webview used `window.screen`, which reports only the
+/// primary display — on a multi-monitor desk every drag resolved to the same
+/// corner regardless of where the pill actually was.
+///
+/// The position comes from `panel::current_position`, not `outer_position()`:
+/// Wayland never tells a client where its surface is, so `outer_position()` is
+/// a permanent (0, 0) there and this always snapped to the same corner. When
+/// the platform genuinely cannot say, the current dock is kept rather than
+/// invented.
 #[tauri::command]
 fn snap_voice_bar(app: AppHandle, margin: Option<i32>) -> Result<String, String> {
     let window = app
         .get_webview_window("voice-bar")
         .ok_or_else(|| "Voice bar window is not configured.".to_string())?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|err| err.to_string())?
-        .or(window.primary_monitor().map_err(|err| err.to_string())?)
-        .ok_or_else(|| "No monitor found for the voice bar.".to_string())?;
+    let state = app.state::<AppState>();
+    let current = state
+        .voice_bar_anchor
+        .lock()
+        .map(|value| *value)
+        .unwrap_or(panel::PanelAnchor::BottomCenter);
 
-    let screen = monitor.size();
-    let origin = monitor.position();
-    let position = window.outer_position().map_err(|err| err.to_string())?;
-    let size = window.outer_size().map_err(|err| err.to_string())?;
-
-    // Centre of the pill, relative to the monitor it is on.
-    let cx = (position.x - origin.x) as f64 + size.width as f64 / 2.0;
-    let cy = (position.y - origin.y) as f64 + size.height as f64 / 2.0;
-    let w = screen.width as f64;
-    let h = screen.height as f64;
-
-    let vertical = if cy < h / 2.0 { "top" } else { "bottom" };
-    let horizontal = if cx < w / 3.0 {
-        "left"
-    } else if cx > w * 2.0 / 3.0 {
-        "right"
-    } else {
-        "center"
+    let geom = panel::output_geometry(&window)?;
+    let name = match panel::current_position(&window) {
+        Some((x, y)) => nearest_dock(
+            x - geom.origin_x + geom.win_width / 2.0,
+            y - geom.origin_y + geom.win_height / 2.0,
+            geom.width,
+            geom.height,
+        ),
+        None => return Ok(current.name().to_string()),
     };
-    let name = format!("{vertical}-{horizontal}");
     let target = panel::PanelAnchor::parse(&name)
         .ok_or_else(|| format!("Unknown panel anchor '{name}'."))?;
-    panel::anchor(&window, target, margin.unwrap_or(18), false)?;
-    if let Ok(mut slot) = app.state::<AppState>().voice_bar_anchor.lock() {
+    panel::anchor(&window, target, margin.unwrap_or(VOICE_BAR_MARGIN), false)?;
+    if let Ok(mut slot) = state.voice_bar_anchor.lock() {
         *slot = target;
     }
     Ok(name)
@@ -2450,18 +2479,19 @@ fn resize_voice_bar(app: AppHandle, width: f64, height: f64) -> Result<(), Strin
     // Re-dock immediately. Growing the window without re-applying the anchor
     // leaves it expanding away from its edge — on a HiDPI screen by the scale
     // factor too, which is what made the pill drift toward the middle.
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let physical = tauri::PhysicalSize::new(
-        (width * scale).round() as u32,
-        (height * scale).round() as u32,
-    );
+    //
+    // The size is handed over as logical pixels, the same units it arrived in.
+    // Converting to physical here and back inside the panel meant multiplying
+    // by the window's scale and dividing by the monitor's, which are not always
+    // the same number.
+    let size = tauri::LogicalSize::new(width, height);
     let anchor = app
         .state::<AppState>()
         .voice_bar_anchor
         .lock()
         .map(|value| *value)
         .unwrap_or(panel::PanelAnchor::BottomCenter);
-    panel::reposition(&window, anchor, 18, Some(physical))?;
+    panel::reposition(&window, anchor, VOICE_BAR_MARGIN, Some(size))?;
     Ok(())
 }
 
@@ -2493,6 +2523,116 @@ fn hide_voice_bar(app: AppHandle) -> Result<(), String> {
     window.hide().map_err(|err| err.to_string())
 }
 
+/// Whether the app asks the compositor for genuinely transparent windows, and
+/// therefore whether the frontend may paint into a transparent gutter.
+///
+/// One constant drives both halves, and it has to stay that way. "Decorations
+/// are off" does *not* imply "the window is transparent" — they are separate
+/// requests and there is a state where the first has happened and the second
+/// has not. A gutter in that state is not merely ineffective: the ring paints
+/// in the page's background colour and reads as a second, fake window frame
+/// drawn around the real one. Deriving the frontend's behaviour from
+/// `isDecorated()` is what produced exactly that.
+///
+/// So the answer is published by `window_chrome`, and rolling the feature back
+/// is a single edit here: the window goes opaque and the frontend goes back to
+/// square corners together, with no way for the two to disagree.
+#[cfg(target_os = "linux")]
+const CSD_TRANSPARENT: bool = true;
+#[cfg(not(target_os = "linux"))]
+const CSD_TRANSPARENT: bool = false;
+
+/// Transparent margin the client-side-decorated windows keep around their
+/// visible shell, in logical pixels.
+///
+/// A window with no server decorations gets no shadow either — KWin will not
+/// draw one for a surface that says it decorates itself, and a client cannot
+/// paint outside its own surface. So the surface is made bigger than the shell
+/// and the extra ring is left transparent for the CSS to cast a shadow into.
+///
+/// 18 is not arbitrary: it is exactly the reach of the key shadow in
+/// `globals.css` (offset 10 + blur 24/2 − spread 4). A smaller gutter would
+/// clip the penumbra along a straight line, which looks worse than no shadow
+/// at all. **Changing it here means changing the shadow there in the same
+/// commit** — the two numbers are one number.
+///
+/// macOS gets zero: the system draws the shadow, and asking for a transparent
+/// window there would pull in `macOSPrivateApi` and shut the door on the Mac
+/// App Store for no gain. So does any platform where the transparency was not
+/// applied — a gutter is only ever as good as the transparency under it.
+const CSD_GUTTER: f64 = if CSD_TRANSPARENT { 18.0 } else { 0.0 };
+
+/// Total width and height the gutter adds — one on each side.
+///
+/// Window sizes are grown by this so the *usable* area is unchanged: the
+/// gutter is padding, not content, and a user who asked for a 1040px minimum
+/// meant 1040px they can put things in.
+const CSD_PADDING: f64 = CSD_GUTTER * 2.0;
+
+/// Apply the decoration policy both app windows share.
+///
+/// macOS keeps its real title bar and lets content run under the traffic
+/// lights — dropping decorations there would mean reimplementing
+/// close/minimise/zoom, and a hand-drawn imitation never matches the
+/// platform's behaviour or its accessibility affordances. Linux draws its own
+/// header, so it takes the decorations off; the transparency that lets it draw
+/// a shadow is gated on `CSD_TRANSPARENT`, the same flag `window_chrome`
+/// reports to the frontend.
+fn apply_window_chrome<'a, R: tauri::Runtime, M: Manager<R>>(
+    builder: WebviewWindowBuilder<'a, R, M>,
+) -> WebviewWindowBuilder<'a, R, M> {
+    #[cfg(target_os = "macos")]
+    {
+        builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let builder = builder.decorations(false);
+        if CSD_TRANSPARENT {
+            builder.transparent(true)
+        } else {
+            builder
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        builder
+    }
+}
+
+/// What the frontend needs to know about how this window is framed.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowChrome {
+    /// Draw the gutter, the rounded corners and the shadow?
+    ///
+    /// True only when the window is genuinely transparent. `isDecorated()`
+    /// cannot answer this — decorations being off says nothing about whether
+    /// the surface has an alpha channel, and in the state where the first is
+    /// true and the second is not, a gutter renders in the page background and
+    /// looks like a fake window frame drawn around the real window.
+    pub csd_gutter: bool,
+    /// Width of that gutter in logical pixels, so the CSS and the window size
+    /// cannot drift apart.
+    pub gutter: f64,
+}
+
+/// Tell the frontend whether it may draw its own window frame.
+///
+/// Deliberately a statement of fact rather than an inference the caller has to
+/// make: if the transparency is ever rolled back, this starts returning false
+/// on its own and the frontend degrades to square corners with no shadow, with
+/// no second edit anywhere.
+#[tauri::command]
+fn window_chrome() -> WindowChrome {
+    WindowChrome {
+        csd_gutter: CSD_TRANSPARENT,
+        gutter: CSD_GUTTER,
+    }
+}
+
 #[tauri::command]
 fn show_settings_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("settings") {
@@ -2500,29 +2640,125 @@ fn show_settings_window(app: AppHandle) -> Result<(), String> {
         return window.set_focus().map_err(|err| err.to_string());
     }
 
-    let mut builder = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("/settings".into()))
-        .title("Fun ASR Settings")
-        .inner_size(1080.0, 760.0)
-        .min_inner_size(960.0, 640.0)
-        .center();
+    let width = 1080.0 + CSD_PADDING;
+    let height = 760.0 + CSD_PADDING;
+    let window = apply_window_chrome(
+        WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("/settings".into()))
+            .title("Fun ASR Settings")
+            .inner_size(width, height)
+            .min_inner_size(960.0 + CSD_PADDING, 640.0 + CSD_PADDING)
+            .center(),
+    )
+    .build()
+    .map_err(|err| err.to_string())?;
 
-    // Match the main window: content runs under the traffic lights on macOS,
-    // and the app draws its own header on Linux.
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true);
-    }
-    #[cfg(target_os = "linux")]
-    {
-        builder = builder.decorations(false);
-    }
-
-    builder
-        .build()
-        .map_err(|err| err.to_string())?;
+    enforce_window_size(window, width, height);
     Ok(())
+}
+
+/// Make a window actually be the size it was asked to be: wait for it to
+/// settle, then ask again and check.
+///
+/// # What goes wrong without this
+///
+/// A window built while the event loop is already running does not come up at
+/// the size the builder was given. Measured on KDE Wayland, asking for
+/// 1116x796 logical:
+///
+/// | Source | Reads |
+/// |---|---|
+/// | `inner_size()` the instant `build()` returns | 1202x882 |
+/// | what the builder was asked for | 1116x796 |
+/// | what the compositor actually shows | 1030x710 |
+///
+/// Evenly spaced, step 86 — one frame margin applied twice with opposite signs
+/// is the shape of it, though the exact mechanism has not been pinned down.
+/// The main window is unaffected: asked for 1276x856 during `setup()`, it gets
+/// exactly that. Being created after the loop starts is the difference.
+///
+/// # Why waiting is the whole trick
+///
+/// A `set_size` issued immediately after `build()` is swallowed the same way —
+/// that was tried first and produced the same 1030x710. Once the window has
+/// been through one configure cycle, though, `set_size` is honoured exactly:
+/// the correction below was observed moving it 1030 → 1202 → 1116 with each
+/// request landing precisely. So the fix is not a cleverer number, it is
+/// asking a moment later.
+///
+/// # Why it matters
+///
+/// The settings page switches to a two-column layout at 1150px. 1030 minus the
+/// gutter is 994, so the breakpoint would never fire and the page would stay
+/// single-column forever while every line of its CSS looked correct. That
+/// exact failure — a layout whose breakpoint the window could never reach —
+/// has already shipped once in this project, which is why this verifies rather
+/// than assumes, and says what it found either way.
+fn enforce_window_size(window: tauri::WebviewWindow, width: f64, height: f64) {
+    thread::spawn(move || {
+        // Setting a size is a request, not an assignment: `set_size` returns
+        // long before the compositor has done anything, so measuring straight
+        // after it would only ever record our own optimism.
+        let measure = || -> Option<(f64, f64)> {
+            thread::sleep(Duration::from_millis(700));
+            let scale = window.scale_factor().ok()?;
+            let size = window.inner_size().ok()?;
+            Some((size.width as f64 / scale, size.height as f64 / scale))
+        };
+        let good = |w: f64, h: f64| (w - width).abs() <= 1.0 && (h - height).abs() <= 1.0;
+
+        // Two attempts. The first re-states the target, which is what the
+        // settled window honours. The second falls back to correcting by the
+        // measured error, in case some other platform subtracts rather than
+        // ignores. Bounded, so a compositor that simply refuses the size
+        // cannot turn this into an argument.
+        let mut request = (width, height);
+        for attempt in 0..2 {
+            let Some((actual_w, actual_h)) = measure() else {
+                return;
+            };
+            if good(actual_w, actual_h) {
+                let how = if attempt == 0 { "confirmed" } else { "corrected" };
+                eprintln!(
+                    "[{}] size {how} at {actual_w}x{actual_h} logical",
+                    window.label()
+                );
+                return;
+            }
+            if attempt == 1 {
+                request = (
+                    request.0 + (width - actual_w),
+                    request.1 + (height - actual_h),
+                );
+            }
+            eprintln!(
+                "[{}] size came back {actual_w}x{actual_h}, wanted {width}x{height}; \
+                 re-asking for {}x{}",
+                window.label(),
+                request.0,
+                request.1
+            );
+            if window
+                .set_size(tauri::LogicalSize::new(request.0, request.1))
+                .is_err()
+            {
+                return;
+            }
+        }
+        if let Some((actual_w, actual_h)) = measure() {
+            if good(actual_w, actual_h) {
+                eprintln!(
+                    "[{}] size corrected to {actual_w}x{actual_h} logical",
+                    window.label()
+                );
+            } else {
+                eprintln!(
+                    "[{}] size still {actual_w}x{actual_h} after correction; wanted \
+                     {width}x{height}",
+                    window.label()
+                );
+            }
+        }
+    });
 }
 
 pub fn run() {
@@ -2593,24 +2829,38 @@ pub fn run() {
                 );
             }
 
-            // Client-side decorations on Linux. macOS is handled declaratively
-            // by titleBarStyle: Overlay, which keeps the traffic lights while
-            // letting content run under them — dropping decorations entirely
-            // there would mean reimplementing close/minimise/zoom, and a
-            // hand-drawn imitation never matches the platform's behaviour or
-            // its accessibility affordances.
-            #[cfg(target_os = "linux")]
-            for label in ["main", "settings"] {
-                if let Some(window) = app.get_webview_window(label) {
-                    let _ = window.set_decorations(false);
-                }
+            // The main window is built here rather than declared in
+            // tauri.conf.json because transparency cannot be expressed there
+            // per platform: `transparent` in the config applies everywhere, and
+            // on macOS it trips tauri-build's `macos-private-api` check for a
+            // window whose shadow the system already draws. A platform config
+            // file would not help either — merging replaces the whole `windows`
+            // array, so both window definitions would have to be duplicated and
+            // would drift. In Rust the `cfg` is exact and lives next to the
+            // reason for it.
+            apply_window_chrome(
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("/".into()))
+                    .title("Fun ASR Desktop")
+                    .inner_size(1240.0 + CSD_PADDING, 820.0 + CSD_PADDING)
+                    .min_inner_size(1040.0 + CSD_PADDING, 700.0 + CSD_PADDING)
+                    .center(),
+            )
+            .build()?;
+
+            // The tray icon is how the user knows the app is alive at all: it
+            // is driven by a global hotkey, so the main window is usually shut
+            // and nothing else of it is on screen. Not fatal if it fails —
+            // there may be no StatusNotifier host running.
+            if let Err(err) = tray::init(app.handle()) {
+                eprintln!("[tray] unavailable: {err}");
             }
 
             // Anchor the voice bar while it is still unmapped. gtk-layer-shell
             // must claim the surface before the GTK window is realized, which
             // is why the window is declared `visible: false` in the config.
             if let Some(bar) = app.get_webview_window("voice-bar") {
-                match panel::anchor(&bar, panel::PanelAnchor::BottomCenter, 24, false) {
+                match panel::anchor(&bar, panel::PanelAnchor::BottomCenter, VOICE_BAR_MARGIN, false)
+                {
                     Ok(status) => eprintln!(
                         "[voice-bar] anchored (layer_shell={}): {}",
                         status.layer_shell, status.detail
@@ -2667,7 +2917,8 @@ pub fn run() {
             track_voice_bar_drag,
             end_voice_bar_drag,
             hide_voice_bar,
-            show_settings_window
+            show_settings_window,
+            window_chrome
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fun ASR Desktop");
