@@ -41,7 +41,7 @@ pub struct LicensePayload {
     pub version: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, uniffi::Record)]
 #[serde(rename_all = "camelCase")]
 pub struct LicenseInfo {
     pub valid: bool,
@@ -49,6 +49,14 @@ pub struct LicenseInfo {
     pub issued: Option<String>,
     /// Why a licence was rejected, in words the user can act on.
     pub detail: String,
+}
+
+/// A rejected licence as it crosses the UniFFI boundary. The detail is the
+/// same actionable text returned by [`verify`], not a platform-specific code.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum LicenseVerificationError {
+    #[error("{detail}")]
+    Rejected { detail: String },
 }
 
 fn verifying_key() -> Option<VerifyingKey> {
@@ -110,6 +118,20 @@ pub fn verify(license: &str) -> LicenseInfo {
             detail: "Licence verified.".to_string(),
         },
         Err(_) => reject("The licence contents could not be read."),
+    }
+}
+
+/// Verify a licence through UniFFI, preserving rejection details for native
+/// callers rather than asking each platform to translate error variants.
+#[uniffi::export]
+pub fn verify_license(license: String) -> Result<LicenseInfo, LicenseVerificationError> {
+    let info = verify(&license);
+    if info.valid {
+        Ok(info)
+    } else {
+        Err(LicenseVerificationError::Rejected {
+            detail: info.detail,
+        })
     }
 }
 

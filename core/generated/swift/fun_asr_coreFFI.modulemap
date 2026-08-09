@@ -1,0 +1,7 @@
+module fun_asr_coreFFI {
+    header "fun_asr_coreFFI.h"
+    export *
+    use "Darwin"
+    use "_Builtin_stdbool"
+    use "_Builtin_stdint"
+}

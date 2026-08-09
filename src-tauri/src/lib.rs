@@ -1,8 +1,6 @@
-pub mod asr_cloud;
+pub use fun_asr_core::{asr_cloud, license, llm};
 pub mod hotkey;
 pub mod inject;
-pub mod license;
-pub mod llm;
 mod panel;
 mod tray;
 

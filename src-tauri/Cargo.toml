@@ -14,14 +14,15 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 arboard = "3"
-base64 = "0.22"
+base64.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
 cpal = "0.15"
 dirs-next = "2"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json", "multipart"] }
+fun-asr-core = { path = "../core" }
+reqwest.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde.workspace = true
+serde_json.workspace = true
 # tray-icon pulls in the StatusNotifierItem/AppIndicator plumbing on Linux and
 # the NSStatusItem one on macOS. Without it TrayIconBuilder does not exist.
 tauri = { version = "2", features = ["tray-icon"] }
@@ -31,7 +32,6 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # table. apple-native = Keychain, sync-secret-service = Secret Service
 # (kwallet/gnome-keyring) over D-Bus.
 keyring = { version = "3", features = ["apple-native", "sync-secret-service", "crypto-rust"] }
-ed25519-dalek = { version = "3.0.0", default-features = false, features = ["alloc"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Push-to-talk on Wayland: XDG Portal GlobalShortcuts over D-Bus, with a
