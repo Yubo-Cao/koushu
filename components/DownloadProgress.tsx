@@ -3,6 +3,7 @@
 import { Pause } from "lucide-react";
 import { Button } from "@/components/Button";
 import { formatDownloadProgress } from "@/lib/format";
+import { useT } from "@/lib/i18n";
 import type { ModelDownloadState } from "@/lib/types";
 
 type DownloadProgressProps = {
@@ -11,6 +12,7 @@ type DownloadProgressProps = {
 };
 
 export function DownloadProgress({ download, onPause }: DownloadProgressProps) {
+  const t = useT();
   const percent =
     download.totalBytes && download.totalBytes > 0
       ? Math.min(100, Math.max(0, (download.downloadedBytes / download.totalBytes) * 100))
@@ -22,13 +24,13 @@ export function DownloadProgress({ download, onPause }: DownloadProgressProps) {
         <div className="min-w-0">
           <p className="truncate text-ctl font-medium text-ink">{download.message}</p>
           <p className="tnum t-micro text-meta text-smoke">
-            {formatDownloadProgress(download.downloadedBytes, download.totalBytes)}
+            {formatDownloadProgress(download.downloadedBytes, download.totalBytes, t)}
             {percent !== null ? ` · ${percent.toFixed(0)}%` : ""}
           </p>
         </div>
         {download.active && onPause ? (
           <Button size="sm" className="shrink-0" icon={<Pause size={13} />} onClick={onPause}>
-            Pause
+            {t("common.pause")}
           </Button>
         ) : null}
       </div>

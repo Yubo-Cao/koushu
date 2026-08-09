@@ -3,6 +3,7 @@
 import { GripVertical, Loader2, Mic, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_BACKEND } from "@/lib/backends";
+import { useT, type MessageKey } from "@/lib/i18n";
 import {
   autoPasteText,
   createSession,
@@ -39,7 +40,18 @@ function joinPreview(segments: string[], partial: string): string {
 
 type Phase = "idle" | "listening" | "transcribing" | "done";
 
+/** Rust returns the dock as a `PanelAnchor` token; the tooltip wants a name. */
+const ANCHOR_KEYS: Record<string, MessageKey> = {
+  "top-left": "anchor.top-left",
+  "top-center": "anchor.top-center",
+  "top-right": "anchor.top-right",
+  "bottom-left": "anchor.bottom-left",
+  "bottom-center": "anchor.bottom-center",
+  "bottom-right": "anchor.bottom-right",
+};
+
 export default function VoiceBar() {
+  const t = useT();
   const [phase, setPhase] = useState<Phase>("idle");
   const [partial, setPartial] = useState("");
   const [status, setStatus] = useState("");
@@ -166,7 +178,9 @@ export default function VoiceBar() {
     if (collapseTimerRef.current) window.clearTimeout(collapseTimerRef.current);
     try {
       const session = await createSession({
-        title: `Voice ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+        title: t("bar.sessionTitle", {
+          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        }),
         model: "fun-asr-nano-2512",
         language: "中文",
         runtime: DEFAULT_BACKEND,
@@ -202,7 +216,7 @@ export default function VoiceBar() {
       const capture = await stopAudioCapture();
       if (!capture.speechLike) {
         setPartial("");
-        setStatus("No speech");
+        setStatus(t("bar.noSpeech"));
         setPhase("done");
         scheduleCollapse(1600);
         return;
@@ -218,7 +232,7 @@ export default function VoiceBar() {
         const paste = await autoPasteText(result.text);
         setStatus(paste.message);
       } else {
-        setStatus(result.error || "No transcript");
+        setStatus(result.error || t("bar.noTranscript"));
       }
       setPhase("done");
       scheduleCollapse(2800);
@@ -314,7 +328,7 @@ export default function VoiceBar() {
             event.stopPropagation();
             void (recording ? stop() : start());
           }}
-          title={recording ? "Stop" : "Talk"}
+          title={recording ? t("bar.stop") : t("bar.talk")}
         >
           {phase === "transcribing" ? (
             <Loader2 size={14} className="animate-spin" />
@@ -328,12 +342,12 @@ export default function VoiceBar() {
         {/* Idle is just the button and the binding, nothing more. */}
         {!expanded ? (
           <span className="t-micro rounded-md bg-fill px-1.5 py-[3px] text-meta leading-none font-medium whitespace-nowrap text-smoke">
-            {hotkey?.backend === "unavailable" ? "no hotkey" : hotkey?.trigger || "…"}
+            {hotkey?.backend === "unavailable" ? t("bar.noHotkey") : hotkey?.trigger || "…"}
           </span>
         ) : null}
 
         {phase === "listening" ? (
-          <span className="flex h-5 items-center gap-[2.5px]" aria-label="input level">
+          <span className="flex h-5 items-center gap-[2.5px]" aria-label={t("bar.inputLevel")}>
             {[0.45, 0.75, 1, 0.75, 0.45].map((weight, i) => (
               <span
                 key={i}
@@ -357,7 +371,7 @@ export default function VoiceBar() {
             "shrink-0 rounded-md px-0.5 py-1 transition-colors duration-150",
             dragging ? "cursor-grabbing text-ink" : "cursor-grab text-faint hover:text-ink",
           ].join(" ")}
-          title={`Drag to move · ${anchor}`}
+          title={t("bar.drag", { anchor: ANCHOR_KEYS[anchor] ? t(ANCHOR_KEYS[anchor]) : anchor })}
           onMouseDown={startDrag}
         >
           <GripVertical size={13} />
@@ -366,7 +380,7 @@ export default function VoiceBar() {
         {expanded ? (
           <button
             className="press flex h-5 w-5 shrink-0 items-center justify-center rounded-pill text-ctl leading-none text-faint hover:bg-fill hover:text-ink"
-            title="Hide"
+            title={t("bar.hide")}
             onClick={(event) => {
               event.stopPropagation();
               void hideVoiceBar();

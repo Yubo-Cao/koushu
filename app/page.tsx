@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Archive,
   Boxes,
   Copy,
   Download,
@@ -16,8 +17,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/Button";
 import { DownloadProgress } from "@/components/DownloadProgress";
 import { Confetti } from "@/components/Confetti";
+import {
+  SearchResults,
+  SessionSearch,
+  useSessionBrowser,
+} from "@/components/SessionSearch";
 import { SetupView } from "@/components/SetupView";
+import { TitleBar } from "@/components/TitleBar";
 import { DEFAULT_BACKEND } from "@/lib/backends";
+import { useT } from "@/lib/i18n";
 import {
   copyText,
   createSession,
@@ -30,6 +38,7 @@ import {
   listSessions,
   listTranscripts,
   pauseModelDownload,
+  setSessionArchived,
   showSettingsWindow,
   showVoiceBar,
   startStreamingTranscription,
@@ -59,6 +68,7 @@ function joinPreview(segments: string[], partial: string): string {
 }
 
 export default function Home() {
+  const t = useT();
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeSession, setActiveSession] = useState<SessionInfo | null>(null);
@@ -68,7 +78,10 @@ export default function Home() {
   const [audioInputs, setAudioInputs] = useState<AudioInputInfo[]>([]);
   const [audioInputId, setAudioInputId] = useState("");
   const [inputLevel, setInputLevel] = useState<AudioLevelInfo>(idleLevel);
-  const [status, setStatus] = useState("Ready");
+  // Empty means "nothing has happened yet", which renders as the idle label in
+  // whatever locale is current — storing the translated string here instead
+  // would freeze it at the locale it was set in.
+  const [status, setStatus] = useState("");
   const [recording, setRecording] = useState(false);
   const [partial, setPartial] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -83,6 +96,10 @@ export default function Home() {
   const [formatting, setFormatting] = useState<Record<string, string>>({});
   const [formatError, setFormatError] = useState<Record<string, string>>({});
   const levelTimerRef = useRef<number | null>(null);
+  // Search, filters and the archive scope. Owns its own state so the sidebar
+  // and the results pane cannot disagree about what is being looked at.
+  const browser = useSessionBrowser();
+  const [pendingScroll, setPendingScroll] = useState<string | null>(null);
 
   useEffect(() => {
     getBootstrap()
@@ -126,17 +143,89 @@ export default function Home() {
   }
 
   async function refreshSessions(selectId?: string) {
-    const next = await listSessions();
+    // The filters narrow the list in SQL rather than here: a date range or the
+    // archive scope has to be applied across the whole history, not across
+    // whichever page of it happens to be loaded.
+    const next = await listSessions(200, browser.filter);
     setSessions(next);
     if (selectId) {
       setActiveSession(next.find((session) => session.id === selectId) || next[0] || null);
     }
   }
 
+  // Re-list whenever the filters change. The active session is kept if it
+  // survives the new filter, so tightening a filter never yanks the transcript
+  // pane out from under whatever is being read.
+  useEffect(() => {
+    listSessions(200, browser.filter)
+      .then((next) => {
+        setSessions(next);
+        setActiveSession((current) =>
+          current && next.some((session) => session.id === current.id)
+            ? current
+            : next[0] || null,
+        );
+      })
+      .catch((error) => setStatus(String(error)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [browser.filter]);
+
+  /**
+   * Opens the session a search hit belongs to and scrolls to the transcript.
+   *
+   * The scroll cannot happen here: the transcripts for that session have not
+   * been fetched yet, so the element does not exist. It is deferred to an
+   * effect that runs once they land.
+   */
+  function openHit(sessionId: string, transcriptId: string) {
+    const session = sessions.find((item) => item.id === sessionId);
+    if (session) {
+      setActiveSession(session);
+    } else {
+      // The hit is in a session the sidebar filter is hiding — an archived one,
+      // most often. Fetch it so it can still be opened.
+      listSessions(200, { ...browser.filter, archived: "all" })
+        .then((all) => {
+          const found = all.find((item) => item.id === sessionId);
+          if (found) setActiveSession(found);
+        })
+        .catch((error) => setStatus(String(error)));
+    }
+    browser.clear();
+    setPendingScroll(transcriptId);
+  }
+
+  useEffect(() => {
+    if (!pendingScroll) return;
+    // This effect first runs while `transcripts` still holds the *previous*
+    // session's rows, because selecting a session only starts the fetch. Giving
+    // up then would mean the jump silently never happens; waiting until the row
+    // is actually in the list is what makes it land.
+    if (!transcripts.some((transcript) => transcript.id === pendingScroll)) return;
+    const target = document.getElementById(`transcript-${pendingScroll}`);
+    setPendingScroll(null);
+    target?.scrollIntoView({ block: "center" });
+  }, [pendingScroll, transcripts]);
+
+  async function toggleArchive(session: SessionInfo, archived: boolean) {
+    try {
+      await setSessionArchived(session.id, archived);
+      await refreshSessions();
+      browser.refreshOptions();
+      setStatus(
+        archived
+          ? `Archived “${session.title}”. It is still searchable and can be restored.`
+          : `Restored “${session.title}” to the session list.`,
+      );
+    } catch (error) {
+      setStatus(String(error));
+    }
+  }
+
   async function ensureSession(): Promise<SessionInfo> {
     if (activeSession) return activeSession;
     const session = await createSession({
-      title: "Session",
+      title: t("home.sessionUntitled"),
       model: modelId,
       language,
       runtime: selectedRuntime(),
@@ -149,7 +238,9 @@ export default function Home() {
     setBusy("session");
     try {
       const session = await createSession({
-        title: `Session ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+        title: t("home.sessionTitle", {
+          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        }),
         model: modelId,
         language,
         runtime: selectedRuntime(),
@@ -173,9 +264,9 @@ export default function Home() {
         paused: false,
         downloadedBytes: event.data.downloadedBytes,
         totalBytes: event.data.totalBytes,
-        message: "Downloading model from Hugging Face",
+        message: t("download.model"),
       });
-      setStatus("Downloading model from Hugging Face.");
+      setStatus(t("download.model"));
     } else if (event.event === "paused") {
       setDownload({
         modelId: event.data.modelId,
@@ -183,9 +274,9 @@ export default function Home() {
         paused: true,
         downloadedBytes: event.data.downloadedBytes,
         totalBytes: event.data.totalBytes,
-        message: "Download paused",
+        message: t("download.paused"),
       });
-      setStatus("Download paused.");
+      setStatus(t("download.paused"));
     } else if (event.event === "finished") {
       setDownload({
         modelId: event.data.modelId,
@@ -193,9 +284,9 @@ export default function Home() {
         paused: false,
         downloadedBytes: event.data.downloadedBytes,
         totalBytes: event.data.totalBytes,
-        message: "Model installed",
+        message: t("download.installed"),
       });
-      setStatus("Model installed.");
+      setStatus(t("download.installed"));
     } else if (event.event === "error") {
       setDownload((current) =>
         current
@@ -215,7 +306,7 @@ export default function Home() {
 
   async function installModel() {
     setBusy("download");
-    setStatus("Downloading model from Hugging Face.");
+    setStatus(t("download.model"));
     try {
       const model = await downloadModelWithProgress(modelId, handleDownloadEvent);
       setBootstrap((current) =>
@@ -226,7 +317,7 @@ export default function Home() {
             }
           : current,
       );
-      setStatus(model.status === "installed" ? "Model installed." : "Download paused.");
+      setStatus(model.status === "installed" ? t("download.installed") : t("download.paused"));
     } catch (error) {
       setStatus(String(error));
     } finally {
@@ -235,7 +326,7 @@ export default function Home() {
   }
 
   async function pauseDownload() {
-    setDownload((current) => (current ? { ...current, message: "Pausing download..." } : current));
+    setDownload((current) => (current ? { ...current, message: t("download.pausing") } : current));
     await pauseModelDownload(modelId);
   }
 
@@ -247,7 +338,7 @@ export default function Home() {
       recordingSessionIdRef.current = session.id;
       setRecording(true);
       setPartial("");
-      setStatus("Listening");
+      setStatus(t("home.status.listening"));
       void refreshAudioInputs();
       levelTimerRef.current = window.setInterval(() => {
         void getAudioLevel()
@@ -318,13 +409,13 @@ export default function Home() {
     clearRecordingTimers();
     setBusy("transcribe");
     setRecording(false);
-    setStatus("Transcribing");
+    setStatus(t("home.status.transcribing"));
     try {
       const capture = await stopAudioCapture();
       setInputLevel(idleLevel);
       if (!capture.speechLike) {
         setPartial("");
-        setStatus(`No voice detected · input ${formatDb(capture.db)}`);
+        setStatus(t("home.status.noVoice", { db: formatDb(capture.db) }));
         return;
       }
       const result = await transcribeAudio({
@@ -338,7 +429,7 @@ export default function Home() {
         setPartial("");
       }
       if (result.trial?.firstTranscript) setCelebrate(true);
-      setStatus(result.error || "Saved");
+      setStatus(result.error || t("home.status.saved"));
     } catch (error) {
       setStatus(String(error));
     } finally {
@@ -352,11 +443,16 @@ export default function Home() {
     setStatus(result.message);
   }
 
+  // Both early returns still need the title bar: the window has no system
+  // frame, so without it there is nothing to drag and no way to close.
   if (!bootstrap) {
     return (
-      <main className="flex min-h-screen items-center justify-center text-sm text-smoke">
-        Loading Fun ASR Desktop
-      </main>
+      <div className="flex h-dvh flex-col">
+        <TitleBar brand={<span className="t-title text-ctl font-semibold">{t("common.appName")}</span>} />
+        <main className="flex flex-1 items-center justify-center text-ctl text-smoke">
+          {t("common.loading")}
+        </main>
+      </div>
     );
   }
 
@@ -372,54 +468,94 @@ export default function Home() {
 
   return (
     /*
-      Chrome floats, content flows under it. The sidebar header, the toolbar and
-      the transcript bar are sticky glass inside their own scroll containers, so
-      what they blur is the real content sliding beneath them — the one place in
-      this app where backdrop-filter has something to work with. An opaque strip
-      that merely reserves space would look the same standing still and dead in
-      motion.
+      Three fixed bands and one scroller: title bar, sidebar + transcripts, and
+      the control deck. Only the deck is sticky inside the scroll container, and
+      it is the only surface in the window carrying a backdrop-filter — it is
+      the only one that ever has page content passing beneath it. Chrome that
+      cannot be scrolled under gets an honest fill instead of a blur that
+      resolves to the pixels it started with.
     */
-    <>
+    <div className="flex h-dvh flex-col">
       <Confetti fire={celebrate} onDone={() => setCelebrate(false)} />
-      <main className="grid h-dvh min-h-0 grid-cols-[238px_minmax(0,1fr)] lg:grid-cols-[266px_minmax(0,1fr)]">
-      <aside className="hairline-r relative min-h-0">
-        <div className="scrollbar-thin absolute inset-0 flex flex-col overflow-y-auto">
-          <div className="glass-chrome sticky top-0 z-20 px-3 pt-3 pb-2.5">
-            {/* The version was a second line under the title, which cost 18px of
-                sticky header for a string nobody reads twice. Beside the name it
-                costs nothing and still answers "which build is this". */}
-            <div className="mb-2.5 flex items-center justify-between gap-2 pl-1">
-              <div className="flex min-w-0 items-baseline gap-2">
-                <h1 className="t-title text-head font-semibold">Fun ASR</h1>
-                <span className="tnum t-micro text-meta text-faint">0.0.2</span>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-[26px] px-0"
-                title="Settings"
-                onClick={showSettingsWindow}
-              >
-                <Settings size={16} />
-              </Button>
-            </div>
+
+      {/*
+        One bar across the top of the window, not two stacked ones. The system
+        frame is gone on both platforms, so this is the title bar; it is also
+        the place the session title and status already wanted to be. Its left
+        zone is exactly the sidebar's width, so the app identity sits over the
+        sidebar and the session sits over the transcripts — the split the
+        window already has, carried up into the chrome instead of fought.
+      */}
+      <TitleBar
+        leadClassName="w-[calc(238px-0.5rem)] pr-2 lg:w-[calc(266px-0.5rem)]"
+        brand={
+          <>
+            <h1 className="t-title text-ctl font-semibold">{t("common.appName")}</h1>
+            <span className="tnum t-micro text-meta text-faint">0.0.2</span>
+          </>
+        }
+        actions={
+          <>
             <Button
-              variant="primary"
-              className="w-full"
-              icon={<Plus size={15} />}
-              disabled={busy === "session"}
-              onClick={newSession}
+              variant="ghost"
+              size="sm"
+              className="w-[26px] px-0"
+              title={t("home.showVoiceBar")}
+              onClick={showVoiceBar}
             >
-              New Session
+              <PanelTop size={15} />
             </Button>
-          </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-[26px] px-0"
+              title={t("common.settings")}
+              onClick={showSettingsWindow}
+            >
+              <Settings size={16} />
+            </Button>
+          </>
+        }
+      >
+        <span data-tauri-drag-region className="truncate text-ctl font-semibold">
+          {activeSession?.title || t("home.noSession")}
+        </span>
+        <span data-tauri-drag-region className="t-micro shrink-0 truncate text-meta text-smoke">
+          {status || t("home.status.ready")}
+        </span>
+      </TitleBar>
+
+      <main className="grid min-h-0 flex-1 grid-cols-[238px_minmax(0,1fr)] lg:grid-cols-[266px_minmax(0,1fr)]">
+      {/* The New Session button is deliberately *outside* the scroll container.
+          As a sticky glass strip it had session titles sliding under it and
+          showing through the material, which reads as a rendering fault rather
+          than as depth. Content scrolling under chrome only works where the
+          chrome has real weight; a 44px strip does not. */}
+      <aside className="hairline-r flex min-h-0 flex-col">
+        <div className="shrink-0 px-3 pt-2.5 pb-2.5">
+          <Button
+            variant="primary"
+            className="w-full"
+            icon={<Plus size={15} />}
+            disabled={busy === "session"}
+            onClick={newSession}
+          >
+            {t("home.newSession")}
+          </Button>
+        </div>
+        <SessionSearch
+          browser={browser}
+          activeSession={activeSession}
+          onArchive={toggleArchive}
+        />
+        <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
 
           {/* One line per session, not two. The language was a full second line
               at 11px/1.6 under every title, which made a row 57px tall and put
               eight sessions on a screen that comfortably holds fifteen. It is
               secondary information, so it sits where secondary information goes
               — trailing, quiet, on the same line. */}
-          <div className="flex-1 px-2 pt-2.5 pb-4">
+          <div className="px-2 pb-4">
             {groupedSessions.map(([date, dateSessions]) => (
               <section key={date} className="mb-3.5">
                 <p className="t-micro mb-1 px-2.5 text-meta font-semibold tracking-wider uppercase text-faint">
@@ -431,15 +567,24 @@ export default function Home() {
                       key={session.id}
                       className={[
                         "press flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left",
+                        // A 28px row does not need its own pane of glass with a
+                        // specular rim around it. A fill and a weight change say
+                        // "selected" with less to look at.
                         activeSession?.id === session.id
-                          ? "glass rim font-medium text-ink"
+                          ? "bg-fill-strong font-medium text-ink"
                           : "text-ink-2 hover:bg-fill",
                       ].join(" ")}
                       title={session.title}
                       onClick={() => setActiveSession(session)}
                     >
                       <span className="min-w-0 flex-1 truncate text-ctl">{session.title}</span>
-                      <span className="t-micro shrink-0 text-meta text-faint">
+                      <span className="t-micro flex shrink-0 items-center gap-1 text-meta text-faint">
+                        {/* Without this, the "Everything" archive scope shows
+                            archived and active sessions in one indistinguishable
+                            list. */}
+                        {session.archived_at ? (
+                          <Archive size={10} aria-label={t("search.scopeArchived")} />
+                        ) : null}
                         {session.language}
                       </span>
                     </button>
@@ -447,90 +592,46 @@ export default function Home() {
                 </div>
               </section>
             ))}
+
+            {/* An empty sidebar under an active filter looks identical to an
+                empty sidebar in a brand-new install. */}
+            {groupedSessions.length === 0 ? (
+              <p className="t-micro px-2.5 py-2 text-meta text-smoke">
+                {browser.activeFilters > 0
+                  ? t("home.sidebar.noMatches")
+                  : browser.filter.archived === "archived"
+                    ? t("home.sidebar.noArchived")
+                    : t("home.sidebar.noSessions")}
+              </p>
+            ) : null}
           </div>
         </div>
       </aside>
 
       <section className="relative min-h-0">
         <div className="scrollbar-thin absolute inset-0 flex flex-col overflow-y-auto">
-          {/*
-            The microphone picker used to live here, three pills from the meter
-            that tells you whether it is working and a whole window away from
-            the Talk button the footer text told you to press next. It now sits
-            in the footer beside both. That is the grouping rule — put a control
-            next to what it affects — and it is also what fixed the truncation:
-            the mic name is the one value here with no upper bound, and taking
-            it out of the toolbar gave the two that remain room to show their
-            values in full.
-
-            The Download button renders only when there is something to
-            download. A permanently disabled "Installed" button is 110px of
-            toolbar spent on a state the status line already reports.
-          */}
-          <header className="glass-chrome sticky top-0 z-20 px-4 py-2.5">
-            <div className="flex items-center gap-4">
-              <div className="min-w-0 flex-1">
-                <h2 className="t-head truncate text-head font-semibold">
-                  {activeSession?.title || "No session"}
-                </h2>
-                <p className="t-micro truncate text-meta text-smoke">{status}</p>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-end gap-1.5">
-                <SelectField
-                  icon={<Boxes size={13} />}
-                  title="Transcription model"
-                  className="w-[176px]"
-                  value={modelId}
-                  onChange={setModelId}
-                >
-                  {bootstrap.models.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name.replace(/\s*\(.*\)$/, "")}
-                    </option>
-                  ))}
-                </SelectField>
-                <SelectField
-                  icon={<Languages size={13} />}
-                  title="Transcription language"
-                  className="w-[122px]"
-                  value={language}
-                  onChange={setLanguage}
-                >
-                  {languages.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </SelectField>
-                {activeModel?.status !== "installed" ? (
-                  <Button
-                    icon={<Download size={15} />}
-                    disabled={busy !== null}
-                    onClick={installModel}
-                  >
-                    {activeModel?.status === "paused" || download?.paused
-                      ? "Resume"
-                      : "Download"}
-                  </Button>
-                ) : null}
-                <span className="ctl-sep" aria-hidden />
-                <Button icon={<PanelTop size={15} />} onClick={showVoiceBar}>
-                  Voice Bar
-                </Button>
-              </div>
-            </div>
-
-            {download?.modelId === modelId ? (
-              <div className="mt-2.5 max-w-[560px]">
+          {/* The title bar reports; the deck at the bottom acts. Nothing is left
+              for a second header except a download in progress, which only
+              exists while it is happening. */}
+          {download?.modelId === modelId ? (
+            <div className="glass-chrome sticky top-0 z-20 px-4 py-2">
+              <div className="max-w-[560px]">
                 <DownloadProgress
                   download={download}
                   onPause={download.active ? pauseDownload : undefined}
                 />
               </div>
-            ) : null}
-          </header>
+            </div>
+          ) : null}
 
+          {/* Search takes over the pane rather than opening beside it: a hit is
+              a transcript, and this is where transcripts are read. Clearing the
+              box puts the session straight back, untouched. */}
+          {browser.searching ? (
+            <div className="flex-1">
+              <SearchResults browser={browser} onOpen={openHit} />
+            </div>
+          ) : (
           <div className="flex-1 px-5 py-5">
             {transcripts.length === 0 && !partial ? (
               <div className="flex h-full items-center justify-center text-center">
@@ -539,18 +640,23 @@ export default function Home() {
                     <Mic className="text-accent" size={24} />
                   </div>
                   <p className="t-title text-title font-semibold">
-                    Start a local transcription session
+                    {t("home.empty.title")}
                   </p>
                   <p className="t-body mt-1.5 text-ui text-smoke">
-                    Saved transcripts appear here by date. Pick a model and language above,
-                    a microphone below, then press Talk.
+                    {t("home.empty.body")}
                   </p>
                 </div>
               </div>
             ) : (
               <div className="mx-auto max-w-3xl space-y-3">
                 {transcripts.map((transcript) => (
-                  <article key={transcript.id} className="glass rim rounded-lg p-3.5">
+                  <article
+                    key={transcript.id}
+                    // Scroll target for a search hit, which opens the session
+                    // and then has to find the one transcript in it.
+                    id={`transcript-${transcript.id}`}
+                    className="glass rim rounded-lg p-3.5"
+                  >
                     <div className="mb-2.5 flex items-center justify-between gap-3">
                       <div className="tnum t-micro text-meta text-smoke">
                         {new Date(transcript.created_at).toLocaleTimeString([], {
@@ -564,7 +670,9 @@ export default function Home() {
                           variant="ghost"
                           size="sm"
                           title={
-                            llm?.baseUrl ? "Format as Markdown" : "Configure an LLM in Settings first"
+                            llm?.baseUrl
+                              ? t("home.transcript.formatTitle")
+                              : t("home.transcript.formatDisabled")
                           }
                           disabled={!llm?.baseUrl || transcript.id in formatting}
                           onClick={() => void runFormat(transcript.id, transcript.text)}
@@ -572,17 +680,17 @@ export default function Home() {
                           <Wand2 size={13} />
                           <span className="-ml-0.5">
                             {transcript.id in formatting
-                              ? "Formatting"
+                              ? t("home.transcript.formatting")
                               : transcript.formatted_text
-                                ? "Redo"
-                                : "Format"}
+                                ? t("home.transcript.redo")
+                                : t("home.transcript.format")}
                           </span>
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
                           className="w-[26px] px-0"
-                          title="Copy"
+                          title={t("common.copy")}
                           onClick={() => copyTranscript(transcript.formatted_text || transcript.text)}
                         >
                           <Copy size={14} />
@@ -595,8 +703,10 @@ export default function Home() {
                         <div className="t-micro mb-1.5 flex items-center gap-1.5 text-meta font-medium text-moss">
                           <Wand2 size={12} />
                           {transcript.id in formatting
-                            ? "Formatting"
-                            : `Formatted · ${transcript.formatted_preset || "typeset"}`}
+                            ? t("home.transcript.formatting")
+                            : t("home.transcript.formatted", {
+                                preset: transcript.formatted_preset || "typeset",
+                              })}
                         </div>
                         <p className="t-body whitespace-pre-wrap text-read">
                           {formatting[transcript.id] ?? transcript.formatted_text}
@@ -612,7 +722,7 @@ export default function Home() {
                   <article className="glass rim rounded-lg p-3.5 ring-1 ring-rust/25">
                     <div className="t-micro mb-1.5 flex items-center gap-1.5 text-meta font-medium text-rust">
                       <span className="flex h-1.5 w-1.5 rounded-pill bg-rust" />
-                      Live partial
+                      {t("home.transcript.livePartial")}
                     </div>
                     <p className="t-body whitespace-pre-wrap text-read">{partial}</p>
                   </article>
@@ -620,57 +730,109 @@ export default function Home() {
               </div>
             )}
           </div>
+          )}
 
-          {/* Talk, the microphone it will record from, and the meter that proves
-              that microphone is live — one row, one height ladder, reading left
-              to right in the order the user acts. */}
-          <footer className="glass-chrome sticky bottom-0 z-20 mt-auto px-4 py-2.5">
-            <div className="mx-auto flex w-full max-w-4xl items-center gap-2">
+          {/* The control deck. Talk, what it will transcribe with, what it will
+              listen to, and the meter that proves it is listening — one row,
+              one height ladder, reading left to right in the order the user
+              acts on them.
+
+              The three selects are flexible rather than fixed. A native select
+              cannot shrink its own text, so a fixed width either truncates the
+              longest value ("Cloud transcription", a PipeWire device name) or
+              reserves dead space for it; giving each a basis, a floor and a
+              ceiling lets the row spend whatever the window happens to have. */}
+          <footer className="deck sticky bottom-0 z-20 mt-auto px-4 py-2.5">
+            <div className="flex w-full items-center gap-2">
               <Button
                 size="lg"
+                className="shrink-0"
                 variant={recording ? "danger" : "primary"}
                 icon={recording ? <Square size={14} /> : <Mic size={15} />}
                 disabled={busy !== null && busy !== "transcribe"}
                 onClick={recording ? stopRecording : startRecording}
               >
-                {recording ? "Stop" : "Talk"}
+                {recording ? t("home.deck.stop") : t("home.deck.talk")}
               </Button>
+
+              <span className="ctl-sep" aria-hidden />
+
+              <SelectField
+                icon={<Boxes size={13} />}
+                title={t("home.deck.model")}
+                className="min-w-[148px] max-w-[228px] flex-[1.15_1_176px]"
+                value={modelId}
+                onChange={setModelId}
+              >
+                {bootstrap.models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name.replace(/\s*\(.*\)$/, "")}
+                  </option>
+                ))}
+              </SelectField>
+              {activeModel?.status !== "installed" ? (
+                <Button
+                  className="shrink-0"
+                  icon={<Download size={15} />}
+                  disabled={busy !== null}
+                  onClick={installModel}
+                >
+                  {activeModel?.status === "paused" || download?.paused
+                    ? t("common.resume")
+                    : t("common.download")}
+                </Button>
+              ) : null}
+              <SelectField
+                icon={<Languages size={13} />}
+                title={t("home.deck.language")}
+                className="min-w-[104px] max-w-[150px] flex-[0.7_1_120px]"
+                value={language}
+                onChange={setLanguage}
+              >
+                {languages.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </SelectField>
               <SelectField
                 icon={<Mic size={13} />}
                 title={
                   defaultInput
-                    ? `Microphone · default is ${defaultInput.name}`
-                    : "Microphone"
+                    ? t("home.deck.microphoneDefault", { name: defaultInput.name })
+                    : t("home.deck.microphone")
                 }
-                className="w-[196px] shrink-0"
+                className="min-w-[136px] max-w-[240px] flex-[1.15_1_180px]"
                 value={audioInputId}
                 onChange={setAudioInputId}
                 disabled={recording}
               >
                 {/* The resolved device name lives in the tooltip, not in the
                     closed control: PipeWire names run to fifty characters and no
-                    pill that fits in a footer will ever show one. */}
-                <option value="">Default microphone</option>
+                    control that fits in a bar will ever show one. */}
+                <option value="">{t("home.deck.microphoneNone")}</option>
                 {audioInputs.map((input) => (
                   <option key={input.id} value={input.id}>
                     {input.name}
                   </option>
                 ))}
               </SelectField>
-              <InputLevel level={inputLevel} active={recording} />
-              <p className="t-body min-w-0 flex-1 truncate text-ui text-smoke">
-                {recording
-                  ? "Speak normally. The meter should move while you talk."
-                  : audioInputs.length
-                    ? "Press Talk, or hold the hotkey on the voice bar."
-                    : "No microphone input detected by the native audio backend."}
-              </p>
+
+              <span className="ctl-sep" aria-hidden />
+
+              {audioInputs.length ? (
+                <InputLevel level={inputLevel} active={recording} />
+              ) : (
+                <p className="t-body min-w-0 flex-1 truncate text-ui text-rust">
+                  {t("home.deck.noMicrophone")}
+                </p>
+              )}
             </div>
           </footer>
         </div>
       </section>
       </main>
-    </>
+    </div>
   );
 }
 
@@ -681,9 +843,10 @@ export default function Home() {
   and the reading stays exactly as legible.
 */
 function InputLevel({ level, active }: { level: AudioLevelInfo; active: boolean }) {
+  const t = useT();
   return (
-    <div className="ctl rim flex w-[184px] shrink-0 items-center gap-2.5">
-      <span className="t-micro shrink-0 text-meta text-smoke">Input</span>
+    <div className="ctl rim flex min-w-[150px] max-w-[210px] flex-[0.9_1_170px] items-center gap-2.5">
+      <span className="t-micro shrink-0 text-meta text-smoke">{t("home.deck.input")}</span>
       <span className="h-[3px] min-w-0 flex-1 overflow-hidden rounded-pill bg-track">
         <span
           className="block h-full rounded-pill bg-moss transition-all duration-100 ease-glass"
@@ -691,7 +854,7 @@ function InputLevel({ level, active }: { level: AudioLevelInfo; active: boolean 
         />
       </span>
       <span className="tnum t-micro w-[44px] shrink-0 text-right text-meta text-smoke">
-        {active ? formatDb(level.db) : "idle"}
+        {active ? formatDb(level.db) : t("home.deck.idle")}
       </span>
     </div>
   );

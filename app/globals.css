@@ -39,20 +39,42 @@
   --c-smoke: oklch(0.474 0.014 264);
   --c-faint: oklch(0.474 0.012 264);
 
-  /* Accents -------------------------------------------------------------- */
-  --c-accent: oklch(0.58 0.183 258);
-  --c-accent-ink: oklch(0.995 0 0);
+  /* Accents ---------------------------------------------------------------
+     The blue is picked by measurement, not by eye. A filled button's label is
+     13px at weight 500 — normal text as far as WCAG is concerned, so 4.5:1
+     applies and the large-text exemption does not.
+
+     Converting OKLCH to sRGB and running the WCAG formula (the same pipeline,
+     checked against known pairs: white on #007AFF = 4.02, #595959 on white =
+     7.00), the previous value oklch(0.58 0.183 258) = #2876E4 carries white at
+     only **4.31:1**, and the dark scheme's oklch(0.60 0.168 256) = #307FE2 at
+     **3.94:1** — a straight AA failure on the app's most important control.
+     A "9.49:1" figure for this pair is not reachable by any blue that still
+     looks blue; that number is a measurement of something else.
+
+     0.555 lands white at 4.78:1 while keeping 4.60:1 against the light deck it
+     sits on, which is what a button needs on both counts. */
+  --c-accent: oklch(0.555 0.176 258);
+  /* Plain sRGB, not oklch. Written as a colour function this came out of the
+     build pipeline as `lab(99.42% -.0000298023 0)`, and the label on every
+     primary button rendered near-black instead of white — a `var()` whose
+     substituted value does not compute is invalid at computed-value time, so
+     `color` falls back to inherit rather than to the emitted hex fallback.
+     White is white; there is nothing for a wide-gamut notation to buy here,
+     and this is the one colour in the app that must not be able to fail. */
+  --c-accent-ink: #ffffff;
   --c-rust: oklch(0.577 0.196 26);
   --c-moss: oklch(0.55 0.118 156);
-  --c-cobalt: var(--c-accent);
 
-  /* Ambient field — what the glass has to refract. Deliberately quiet: a few
-     wide, low-alpha blooms over a neutral base, not a gradient mesh. */
+  /* Ambient field — what the glass has to refract. Halved from where it was:
+     at the old alphas this was a picture rather than a tint, and with the
+     transcript column often empty it was the loudest thing on screen. Glass
+     needs something behind it to bend, not a sunset. */
   --ambient-base: oklch(0.945 0.009 264);
   --ambient:
-    radial-gradient(115% 85% at 4% -8%, oklch(0.70 0.16 258 / 0.38) 0%, transparent 62%),
-    radial-gradient(95% 78% at 104% -2%, oklch(0.72 0.15 322 / 0.30) 0%, transparent 58%),
-    radial-gradient(125% 95% at 42% 110%, oklch(0.82 0.13 66 / 0.32) 0%, transparent 62%);
+    radial-gradient(115% 85% at 4% -8%, oklch(0.70 0.16 258 / 0.19) 0%, transparent 62%),
+    radial-gradient(95% 78% at 104% -2%, oklch(0.72 0.15 322 / 0.14) 0%, transparent 58%),
+    radial-gradient(125% 95% at 42% 110%, oklch(0.82 0.13 66 / 0.15) 0%, transparent 62%);
 
   /* Glass — structural (sidebars, toolbars). These float over scrolling
      content, which is the only place blur has anything to bite on, so they get
@@ -78,21 +100,34 @@
      where light would catch the curve, nearly gone on the shaded flank. This
      replaces a border — a uniform stroke is what makes a surface look framed
      in metal. */
+  /* Three stops, not five. The extra pair described a highlight nobody can
+     resolve in a 1px ring, and the shaded flank in the middle read as a smudge
+     on small controls. Bright where the light lands, gone on the far side. */
   --rim: linear-gradient(
     155deg,
-    oklch(1 0 0 / 0.95) 0%,
-    oklch(1 0 0 / 0.35) 28%,
-    oklch(0.55 0.02 264 / 0.10) 55%,
-    oklch(1 0 0 / 0.30) 82%,
-    oklch(1 0 0 / 0.70) 100%
+    oklch(1 0 0 / 0.85) 0%,
+    oklch(1 0 0 / 0.22) 45%,
+    oklch(1 0 0 / 0.5) 100%
   );
   --spec-top: oklch(1 0 0 / 0.55);
-  --spec-glow: oklch(1 0 0 / 0.22);
   --spec-shade: oklch(0.20 0.03 264 / 0.10);
 
   --blur-chrome: 44px;
   --blur-raised: 32px;
   --sat: 180%;
+
+  /* --- Control-deck material --------------------------------------------
+     The bottom bar. It is the *same* glass as the rest of the chrome, only
+     denser — a light bar in the light scheme and a dark one in the dark scheme.
+
+     It was briefly a fixed dark slab with white text, on the theory that a
+     control deck should read as an instrument panel. That was wrong: in a
+     light window it looked like a component from a different application had
+     landed at the bottom of the page. A surface earns separation by being a
+     step denser than what it sits on and by having a defined top edge, not by
+     inverting. The pill floating over the desktop is a different problem — it
+     has an unknown backdrop and genuinely needs to carry its own colour. */
+  --deck-fill: oklch(1 0 0 / 0.68);
 
   /* --- Voice-bar material ------------------------------------------------
      Every knob for the floating bar lives here, so retuning it is a variable
@@ -135,10 +170,6 @@
   --c-fill: oklch(0.30 0.02 264 / 0.055);
   --c-fill-strong: oklch(0.30 0.02 264 / 0.10);
   --c-track: oklch(0.30 0.02 264 / 0.10);
-
-  /* Legacy names kept alive so no surface silently loses its colour. */
-  --c-paper: var(--glass-raised-fill);
-  --c-panel: var(--ambient-base);
 
   /* Motion — critically damped by default. This curve settles without
      overshoot; bounce is reserved for anything the user threw. */
@@ -207,22 +238,22 @@
     --c-smoke: oklch(0.775 0.012 264);
     --c-faint: oklch(0.70 0.012 264);
 
-    /* Blue with white text, same as the light scheme.
-       This used to be a brighter blue (L 0.72) carrying near-black text. That
-       reached contrast, but dark text on a saturated blue fill reads as a
-       mistake rather than a choice, and it made the primary action look unlike
-       every other button in the app. Darkening the fill instead keeps white
-       text, which is what a filled accent button is expected to look like. */
-    --c-accent: oklch(0.60 0.168 256);
-    --c-accent-ink: oklch(0.995 0 0);
+    /* A hair lighter than the light scheme, not darker. On a dark surface an
+       identical blue loses its edge against the material; lifting L to 0.565
+       restores 3.77:1 separation from the deck while white text still measures
+       4.58:1, so the button gains presence without spending the label's
+       legibility. Both numbers come from the same OKLCH→sRGB→WCAG pipeline as
+       the light value. */
+    --c-accent: oklch(0.565 0.176 256);
+    --c-accent-ink: #ffffff;
     --c-rust: oklch(0.695 0.175 27);
     --c-moss: oklch(0.755 0.145 158);
 
     --ambient-base: oklch(0.168 0.012 264);
     --ambient:
-      radial-gradient(115% 85% at 4% -8%, oklch(0.55 0.17 262 / 0.42) 0%, transparent 62%),
-      radial-gradient(95% 78% at 104% -2%, oklch(0.52 0.15 322 / 0.32) 0%, transparent 58%),
-      radial-gradient(125% 95% at 42% 110%, oklch(0.55 0.12 62 / 0.26) 0%, transparent 62%);
+      radial-gradient(115% 85% at 4% -8%, oklch(0.55 0.17 262 / 0.22) 0%, transparent 62%),
+      radial-gradient(95% 78% at 104% -2%, oklch(0.52 0.15 322 / 0.16) 0%, transparent 58%),
+      radial-gradient(125% 95% at 42% 110%, oklch(0.55 0.12 62 / 0.13) 0%, transparent 62%);
 
     --glass-chrome-fill: oklch(0.24 0.012 264 / 0.5);
     --glass-chrome-tint: linear-gradient(
@@ -240,14 +271,11 @@
 
     --rim: linear-gradient(
       155deg,
-      oklch(1 0 0 / 0.55) 0%,
-      oklch(1 0 0 / 0.16) 28%,
-      oklch(1 0 0 / 0.04) 55%,
-      oklch(1 0 0 / 0.14) 82%,
-      oklch(1 0 0 / 0.38) 100%
+      oklch(1 0 0 / 0.42) 0%,
+      oklch(1 0 0 / 0.08) 45%,
+      oklch(1 0 0 / 0.24) 100%
     );
     --spec-top: oklch(1 0 0 / 0.22);
-    --spec-glow: oklch(1 0 0 / 0.10);
     --spec-shade: oklch(0 0 0 / 0.24);
 
     --c-line: oklch(1 0 0 / 0.11);
@@ -255,6 +283,8 @@
     --c-fill: oklch(1 0 0 / 0.07);
     --c-fill-strong: oklch(1 0 0 / 0.13);
     --c-track: oklch(0 0 0 / 0.30);
+
+    --deck-fill: oklch(0.225 0.012 264 / 0.72);
 
     --chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 4.6 6 8l3.4-3.4' fill='none' stroke='%23a9aeb9' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
@@ -320,12 +350,40 @@
     U+2E80-2FDF, U+3000-303F, U+3040-30FF, U+3200-4DBF, U+4E00-9FFF,
     U+AC00-D7AF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF;
 }
+/* The heavy faces name the *family*, not the style, and let this rule's own
+   `font-weight` pick the face inside it. That distinction is the whole bug.
+
+   Rendered side by side in the app, `font-family: "Noto Sans CJK SC Bold"` at
+   weight 400 came out Regular, while `font-family: "Noto Sans CJK SC"` at
+   weight 600 came out Bold. So `local()` here resolves through fontconfig's
+   fuzzy family matching — "…SC Bold" is a full name, not a family, and it lands
+   back on the family with the requested weight deciding the style. Naming the
+   style therefore does nothing and naming the family does everything. Medium is
+   the exception: it genuinely is its own family on this platform.
+
+   Han also carries less optical weight than Latin at the same nominal value —
+   at 400 the Han in a mixed run reads a step lighter than the Latin beside it.
+   Mapping 600 to Bold is the compensation, so a heading gets SemiBold Latin and
+   Bold Han and the two land at the same apparent weight. Nothing below 600 is
+   bumped: Medium Han at 13px goes muddy before it goes emphatic. */
 @font-face {
   font-family: "UI CJK";
   src:
-    local("PingFang SC Semibold"), local("Source Han Sans SC Bold"),
-    local("Noto Sans CJK SC Bold"), local("Microsoft YaHei Bold");
-  font-weight: 600 700;
+    local("PingFang SC"), local("Source Han Sans SC"), local("Noto Sans CJK SC"),
+    local("Microsoft YaHei");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+2E80-2FDF, U+3000-303F, U+3040-30FF, U+3200-4DBF, U+4E00-9FFF,
+    U+AC00-D7AF, U+F900-FAFF, U+FE30-FE4F, U+FF00-FFEF;
+}
+@font-face {
+  font-family: "UI CJK";
+  src:
+    local("PingFang SC"), local("Source Han Sans SC"), local("Noto Sans CJK SC"),
+    local("Microsoft YaHei");
+  font-weight: 700;
   font-style: normal;
   font-display: swap;
   unicode-range:
@@ -359,14 +417,11 @@
   --color-accent-ink: var(--c-accent-ink);
   --color-rust: var(--c-rust);
   --color-moss: var(--c-moss);
-  --color-cobalt: var(--c-cobalt);
   --color-line: var(--c-line);
   --color-line-soft: var(--c-line-soft);
   --color-fill: var(--c-fill);
   --color-fill-strong: var(--c-fill-strong);
   --color-track: var(--c-track);
-  --color-paper: var(--c-paper);
-  --color-panel: var(--c-panel);
 
   /* The type scale as utilities, so a call site says `text-meta` rather than
      `text-[11.5px]` and the scale can be retuned in one place. Each carries its
@@ -401,104 +456,82 @@
 
 /* ==========================================================================
    Base
+   ==========================================================================
+
+   Everything here is inside `@layer base` on purpose, and that is load bearing.
+
+   These rules used to be unlayered, and an unlayered rule beats every layered
+   one no matter how specific the layered one is — layer order outranks
+   specificity. So `button { color: inherit }` was silently overriding
+   `.btn-primary { color: var(--c-accent-ink) }`, and the label on every primary
+   button rendered in the *inherited* page ink instead of white. It looked
+   deliberate on the secondary buttons, where inherited ink happens to equal the
+   colour the class asks for, which is exactly why it survived so long.
+
+   Same class of bug the components layer already carries a comment about. The
+   rule is simply: element resets go in `base`, component classes go in
+   `components`, and nothing in this file is unlayered.
    ========================================================================== */
 
-* {
-  box-sizing: border-box;
-}
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
 
-html,
-body {
-  min-height: 100%;
-}
+  html,
+  body {
+    min-height: 100%;
+  }
 
-body {
-  margin: 0;
-  color: var(--c-ink);
-  font-family: var(--font-sans);
-  font-size: var(--fs-ctl);
-  /* A floor, not the value anything actually uses: every step of the scale
-     carries its own leading (see `--fs-*`). 1.6 as a global was the reason an
-     11px label occupied 18px and a two-line list row occupied 57px — CJK does
-     want more air than Latin, but it wants it on reading text, not on chrome. */
-  line-height: 1.5;
-  /* Real weights only. The CJK families' Medium is supplied by the `UI CJK`
-     @font-face bridge above rather than by faking a stem. */
-  font-synthesis-weight: none;
-  /* No `-webkit-font-smoothing: antialiased` here. On macOS it thins strokes,
-     and on this Linux/WebKitGTK target it forces greyscale AA over the
-     fontconfig default, which costs Han — dense glyphs at 11-13px are exactly
-     where stem rendering shows. The platform's own rasterisation is better
-     tuned for this than a blanket override. */
-  background: var(--ambient-base);
-  background-image: var(--ambient);
-  background-attachment: fixed;
-}
+  body {
+    margin: 0;
+    color: var(--c-ink);
+    font-family: var(--font-sans);
+    font-size: var(--fs-ctl);
+    /* A floor, not the value anything actually uses: every step of the scale
+       carries its own leading (see `--fs-*`). 1.6 as a global was the reason an
+       11px label occupied 18px and a two-line list row occupied 57px — CJK does
+       want more air than Latin, but it wants it on reading text, not on
+       chrome. */
+    line-height: 1.5;
+    /* Real weights only. The CJK families' Medium and Bold are supplied by the
+       `UI CJK` @font-face bridge above rather than by faking a stem. */
+    font-synthesis-weight: none;
+    /* No `-webkit-font-smoothing: antialiased` here. On macOS it thins strokes,
+       and on this Linux/WebKitGTK target it forces greyscale AA over the
+       fontconfig default, which costs Han — dense glyphs at 11-13px are exactly
+       where stem rendering shows. The platform's own rasterisation is better
+       tuned for this than a blanket override. */
+    background: var(--ambient-base);
+    background-image: var(--ambient);
+    background-attachment: fixed;
+  }
 
-button,
-select,
-textarea,
-input {
-  font: inherit;
-  color: inherit;
-}
+  button,
+  select,
+  textarea,
+  input {
+    font: inherit;
+    color: inherit;
+  }
 
-button {
-  cursor: default;
-}
+  button {
+    cursor: default;
+  }
 
-/* Tabular figures wherever a number is being watched change — dB readouts,
-   percentages, byte counts — so digits do not jitter the layout. */
-.tnum {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
-}
+  ::selection {
+    background: color-mix(in oklab, var(--c-accent) 28%, transparent);
+    color: var(--c-ink);
+  }
 
-/* Tracking is size-specific. Large Latin reads too loose as it grows; small
-   text reads too tight. CJK wants neither, so these stay small enough to be
-   safe in mixed runs.
-
-   Tracking only — leading now travels with the size (`--text-*--line-height`),
-   so these no longer set it. They used to, which meant a `.t-body` on a 12px
-   hint got the 14px prose leading and every size pairing had two owners. */
-.t-display {
-  letter-spacing: -0.021em;
-}
-.t-title {
-  letter-spacing: -0.014em;
-}
-.t-head {
-  letter-spacing: -0.008em;
-}
-.t-body {
-  letter-spacing: 0;
-}
-.t-micro {
-  letter-spacing: 0.012em;
-}
-
-/* Text sitting on glass. Flat grey loses to a moving backdrop, so foreground
-   text over a translucent surface gets contrast and a touch more weight
-   instead of relying on colour alone. */
-.vibrant {
-  color: var(--c-ink);
-  font-weight: 500;
-}
-.vibrant-dim {
-  color: var(--c-ink-2);
-}
-
-::selection {
-  background: color-mix(in oklab, var(--c-accent) 28%, transparent);
-  color: var(--c-ink);
-}
-
-/* No `border-radius` here. It was setting the *element's* radius while focused,
-   so every capsule button squared off its corners the moment it took keyboard
-   focus. The outline already follows whatever radius the element has. */
-:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  /* No `border-radius` here. It was setting the *element's* radius while
+     focused, so every capsule button squared off its corners the moment it took
+     keyboard focus. The outline already follows whatever radius the element
+     has. */
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
 }
 
 /* ==========================================================================
@@ -511,6 +544,47 @@ button {
    2px by a padding it had explicitly overridden. Inside the layer, utilities
    win, which is what anyone writing className expects. */
 @layer components {
+  /* Tabular figures wherever a number is being watched change — dB readouts,
+     percentages, byte counts — so digits do not jitter the layout. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /* Tracking is size-specific. Large Latin reads too loose as it grows; small
+     text reads too tight. CJK wants neither, so these stay small enough to be
+     safe in mixed runs.
+
+     Tracking only — leading travels with the size (`--text-*--line-height`), so
+     these no longer set it. They used to, which meant a `.t-body` on a 12px
+     hint got the 14px prose leading and every size pairing had two owners. */
+  .t-display {
+    letter-spacing: -0.021em;
+  }
+  .t-title {
+    letter-spacing: -0.014em;
+  }
+  .t-head {
+    letter-spacing: -0.008em;
+  }
+  .t-body {
+    letter-spacing: 0;
+  }
+  .t-micro {
+    letter-spacing: 0.012em;
+  }
+
+  /* Text sitting on glass. Flat grey loses to a moving backdrop, so foreground
+     text over a translucent surface gets contrast and a touch more weight
+     instead of relying on colour alone. */
+  .vibrant {
+    color: var(--c-ink);
+    font-weight: 500;
+  }
+  .vibrant-dim {
+    color: var(--c-ink-2);
+  }
+
   /* The specular rim, shared by every glass surface. A 1px ring with its own
      middle masked out, filled with a gradient so the highlight travels around
      the curve. Painted above content on purpose: it is the edge of the glass,
@@ -537,18 +611,16 @@ button {
     pointer-events: none;
   }
 
-  /* Real glass: something in the page is behind it and gets frosted. Never nest
-     one of these inside another — two translucent layers stacked stop being
-     legible. */
+  /* Cards and panels. No `backdrop-filter`, deliberately: these sit on the
+     page's own fixed gradient, nothing ever scrolls beneath them, and blurring
+     a smooth gradient produces the same pixels it started with. It bought a
+     compositing layer per card and nothing else. Blur is now only where content
+     genuinely passes underneath — the deck, and the download strip. */
   .glass {
     position: relative;
     background-color: var(--glass-raised-fill);
     background-image: var(--glass-raised-tint);
-    -webkit-backdrop-filter: blur(var(--blur-raised)) saturate(var(--sat));
-    backdrop-filter: blur(var(--blur-raised)) saturate(var(--sat));
-    box-shadow:
-      inset 0 1px 0 0 var(--spec-top),
-      inset 0 0 18px -6px var(--spec-glow);
+    box-shadow: inset 0 1px 0 0 var(--spec-top);
   }
 
   .glass-chrome {
@@ -591,28 +663,40 @@ button {
     --spec-top: oklch(1 0 0 / 0.18);
   }
 
-  /* A slow highlight travelling across the top of the material. This is the
-     "liquid" half of liquid glass — without it the surface reads as frosted
-     plastic. Purely decorative, so it never takes pointer events. */
-  .sheen > * {
+  /* ---- The control deck --------------------------------------------------
+
+     One bar along the bottom holding everything that shapes the next
+     recording: Talk, the model, the language, the microphone, and the meter
+     that proves the microphone is live.
+
+     Splitting these between a top toolbar and a bottom footer was the "像两个
+     人做的" problem — not because the two bars used different pixel values
+     (they did, and the `--ctl-*` ladder fixes that), but because nothing said
+     which bar a control belonged in. The model picker sat at the top; the Talk
+     button it governs sat at the bottom. Merged, one honest split is left: the
+     title bar *reports*, this bar *acts*.
+
+     Materially it is the same glass as the rest of the chrome, one step denser
+     and with a defined top edge. That is the whole separation — a surface reads
+     as its own object by being denser than what it sits on, not by inverting
+     into a dark slab that follows neither scheme. */
+  /* The title bar is the deck's other half: same fill, edge on the other side.
+     No backdrop-filter — it sits above every scroll container in the window, so
+     nothing can pass under it and there is nothing to frost. */
+  .titlebar {
     position: relative;
-    z-index: 1;
+    background-color: var(--deck-fill);
+    border-bottom: 1px solid var(--c-line);
+    box-shadow: inset 0 1px 0 0 var(--spec-top);
   }
-  .sheen::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    background: linear-gradient(
-      100deg,
-      transparent 12%,
-      oklch(1 0 0 / 0.16) 42%,
-      oklch(1 0 0 / 0.05) 52%,
-      transparent 72%
-    );
-    opacity: 0.9;
+
+  .deck {
+    position: relative;
+    background-color: var(--deck-fill);
+    -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(var(--sat));
+    backdrop-filter: blur(var(--blur-chrome)) saturate(var(--sat));
+    border-top: 1px solid var(--c-line);
+    box-shadow: inset 0 1px 0 0 var(--spec-top);
   }
 
   /* Scroll edge effect instead of a hard rule: content fades as it slides under
@@ -686,9 +770,10 @@ button {
     border: 1px solid var(--ctl-border);
     border-radius: var(--r-ctl);
     color: var(--c-ink);
-    box-shadow:
-      inset 0 1px 0 0 var(--spec-top),
-      inset 0 -8px 14px -12px var(--spec-shade);
+    /* One inner highlight along the top edge, and nothing else. The bottom
+       shading that used to pair with it is invisible on a 30px control and
+       only ever showed up as a smudge when the control was disabled. */
+    box-shadow: inset 0 1px 0 0 var(--spec-top);
   }
 
   .ctl-sm {
@@ -725,9 +810,7 @@ button {
     --ctl-fill: var(--c-accent);
     --ctl-border: transparent;
     color: var(--c-accent-ink);
-    box-shadow:
-      inset 0 1px 0 0 oklch(1 0 0 / 0.36),
-      inset 0 -10px 16px -12px oklch(0 0 0 / 0.22);
+    box-shadow: inset 0 1px 0 0 oklch(1 0 0 / 0.28);
   }
   .btn-primary:hover:not(:disabled) {
     --ctl-fill: color-mix(in oklab, var(--c-accent) 88%, black);
@@ -780,7 +863,7 @@ button {
     --ctl-border: var(--c-accent);
     box-shadow:
       inset 0 1px 0 0 var(--spec-top),
-      0 0 0 3px color-mix(in oklab, var(--c-accent) 26%, transparent);
+      0 0 0 3px color-mix(in oklab, var(--c-accent) 30%, transparent);
   }
   .field:disabled {
     opacity: 0.55;
@@ -874,22 +957,22 @@ body:has(main[data-transparent="true"]) {
     --pill-alpha: 1;
     --pill-text-shadow: none;
     --pill-glow: transparent;
+    --deck-fill: oklch(0.965 0.004 264);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --glass-chrome-fill: oklch(0.225 0.012 264);
       --glass-raised-fill: oklch(0.265 0.012 264);
+      --deck-fill: oklch(0.205 0.012 264);
     }
   }
   .glass,
   .glass-chrome,
   .glass-pill,
+  .deck,
   .field {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
-  }
-  .sheen::after {
-    display: none;
   }
   body {
     background-image: none;
@@ -904,6 +987,7 @@ body:has(main[data-transparent="true"]) {
     --glass-chrome-fill: oklch(1 0 0 / 0.94);
     --glass-raised-fill: oklch(1 0 0 / 0.96);
     --pill-alpha: 0.88;
+    --deck-fill: oklch(1 0 0 / 0.96);
     /* At high contrast the rim stops being a subtle highlight and becomes a
        real, evenly readable edge. */
     --rim: linear-gradient(155deg, oklch(1 0 0 / 0.95), oklch(1 0 0 / 0.65));
@@ -914,6 +998,7 @@ body:has(main[data-transparent="true"]) {
       --c-smoke: oklch(0.82 0.012 264);
       --glass-chrome-fill: oklch(0.19 0.012 264 / 0.95);
       --glass-raised-fill: oklch(0.24 0.012 264 / 0.96);
+      --deck-fill: oklch(0.19 0.012 264 / 0.96);
     }
   }
 }

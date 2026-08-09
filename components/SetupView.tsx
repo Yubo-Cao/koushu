@@ -3,7 +3,10 @@
 import { ArrowRight, Check, Cpu, Database, Download, Shield } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/Button";
+import { TitleBar } from "@/components/TitleBar";
 import { DownloadProgress } from "@/components/DownloadProgress";
+import { useT } from "@/lib/i18n";
+import { modelStatusLabel } from "@/lib/format";
 import { completeOnboarding, downloadModelWithProgress, pauseModelDownload } from "@/lib/tauri";
 import type { Bootstrap, ModelDownloadEvent, ModelDownloadState, ModelInfo } from "@/lib/types";
 
@@ -14,6 +17,7 @@ type SetupViewProps = {
 };
 
 export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [download, setDownload] = useState<ModelDownloadState | null>(null);
@@ -29,7 +33,7 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
         paused: false,
         downloadedBytes: event.data.downloadedBytes,
         totalBytes: event.data.totalBytes,
-        message: "Downloading Fun-ASR-Nano from Hugging Face",
+        message: t("setup.downloadingShort"),
       });
     } else if (event.event === "paused") {
       setDownload({
@@ -38,7 +42,7 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
         paused: true,
         downloadedBytes: event.data.downloadedBytes,
         totalBytes: event.data.totalBytes,
-        message: "Download paused",
+        message: t("download.paused"),
       });
     } else if (event.event === "finished") {
       setDownload({
@@ -47,7 +51,7 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
         paused: false,
         downloadedBytes: event.data.downloadedBytes,
         totalBytes: event.data.totalBytes,
-        message: "Model installed",
+        message: t("download.installed"),
       });
     } else if (event.event === "error") {
       setDownload((current) =>
@@ -68,12 +72,12 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
   async function downloadAndContinue() {
     if (!model) return;
     setBusy(true);
-    setMessage("Downloading the Fun-ASR-Nano Q4_K GGUF model from Hugging Face.");
+    setMessage(t("setup.downloading"));
     try {
       const updated = installed ? model : await downloadModelWithProgress(model.id, handleDownloadEvent);
       onModelsChanged(bootstrap.models.map((item) => (item.id === updated.id ? updated : item)));
       if (updated.status !== "installed") {
-        setMessage("Download paused. Resume when you are ready.");
+        setMessage(t("setup.paused"));
         return;
       }
       await completeOnboarding();
@@ -87,7 +91,7 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
 
   async function pauseDownload() {
     if (!model) return;
-    setDownload((current) => (current ? { ...current, message: "Pausing download..." } : current));
+    setDownload((current) => (current ? { ...current, message: t("download.pausing") } : current));
     await pauseModelDownload(model.id);
   }
 
@@ -97,13 +101,17 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
   }
 
   return (
-    <main className="min-h-dvh overflow-y-auto">
-      <section className="mx-auto flex min-h-dvh max-w-6xl flex-col px-5 py-6 md:px-6 md:py-8">
+    <div className="flex h-dvh flex-col">
+      <TitleBar brand={<span className="t-title text-ctl font-semibold">{t("common.appName")}</span>} />
+      <main className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+      <section className="mx-auto flex max-w-6xl flex-col px-5 py-6 md:px-6 md:py-8">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="t-micro text-ctl font-semibold text-accent">Fun ASR Desktop 0.0.2</p>
+            <p className="t-micro text-ctl font-semibold text-accent">
+              {t("setup.version", { version: "0.0.2" })}
+            </p>
             <h1 className="t-display mt-2.5 max-w-3xl text-[28px] leading-[1.15] font-semibold text-ink md:text-[34px]">
-              Welcome to local voice transcription.
+              {t("setup.headline")}
             </h1>
           </div>
           <div className="ctl rim inline-flex items-center text-smoke">
@@ -114,32 +122,32 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
         <div className="grid flex-1 grid-cols-1 gap-6 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(340px,400px)] lg:gap-8 lg:py-8">
           <section className="flex flex-col justify-center">
             <p className="t-body max-w-2xl text-[15px] leading-[1.65] text-smoke">
-              Talk into your microphone, get fast local transcripts, keep history on this machine, and use the floating bar to paste text into any app.
+              {t("setup.lede")}
             </p>
 
             <div className="mt-8 grid max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2">
-              <Feature icon={<Cpu size={17} />} title="CPU-only ASR" text="Bundles the official Fun-ASR llama.cpp runtime. No GPU, no Python, no CUDA." />
-              <Feature icon={<Download size={17} />} title="Hugging Face models" text="Downloads Fun-ASR-Nano Q4_K on first setup." />
-              <Feature icon={<Database size={17} />} title="Local transcripts" text="Saves sessions by date in local SQLite." />
-              <Feature icon={<Shield size={17} />} title="Private by default" text="No cloud service is needed for transcription." />
+              <Feature icon={<Cpu size={17} />} title={t("setup.feature.cpu.title")} text={t("setup.feature.cpu.text")} />
+              <Feature icon={<Download size={17} />} title={t("setup.feature.models.title")} text={t("setup.feature.models.text")} />
+              <Feature icon={<Database size={17} />} title={t("setup.feature.local.title")} text={t("setup.feature.local.text")} />
+              <Feature icon={<Shield size={17} />} title={t("setup.feature.private.title")} text={t("setup.feature.private.text")} />
             </div>
           </section>
 
           <aside className="glass rim flex min-w-0 flex-col rounded-lg p-4">
             <div className="flex items-start justify-between gap-4 border-b border-line-soft pb-3">
               <div>
-                <h2 className="t-title text-title font-semibold">Install Default Model</h2>
-                <p className="t-body mt-0.5 text-ui text-smoke">Fun-ASR-Nano GGUF Q4_K from Hugging Face</p>
+                <h2 className="t-title text-title font-semibold">{t("setup.card.title")}</h2>
+                <p className="t-body mt-0.5 text-ui text-smoke">{t("setup.card.subtitle")}</p>
               </div>
               {installed ? <Check className="shrink-0 text-moss" size={22} /> : <Download className="shrink-0 text-accent" size={22} />}
             </div>
 
             <div className="space-y-2 py-4 text-ctl">
-              <Info label="Runtime" value={bootstrap.platform.bundled_asr ? "Bundled CPU runtime" : "Runtime missing"} />
-              <Info label="Model" value={model?.name || "Fun-ASR-Nano GGUF Q4_K"} />
-              <Info label="Download" value="about 897 MB" />
-              <Info label="Status" value={installed ? "ready" : model?.status || "available"} />
-              <Info label="Clipboard" value={bootstrap.platform.paste_tools.length ? "copy and paste available" : "copy only fallback"} />
+              <Info label={t("setup.card.runtime")} value={bootstrap.platform.bundled_asr ? t("setup.card.runtimeBundled") : t("settings.runtime.missing")} />
+              <Info label={t("setup.card.model")} value={model?.name || "Fun-ASR-Nano GGUF Q4_K"} />
+              <Info label={t("setup.card.download")} value={t("setup.card.downloadSize")} />
+              <Info label={t("setup.card.status")} value={installed ? t("model.status.ready") : modelStatusLabel(model?.status || "available", t)} />
+              <Info label={t("setup.card.clipboard")} value={bootstrap.platform.paste_tools.length ? t("setup.card.clipboardFull") : t("setup.card.clipboardCopyOnly")} />
             </div>
 
             {download ? (
@@ -150,7 +158,7 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
               <p className="t-body mt-auto rounded-md bg-fill p-2.5 text-ui text-smoke">{message}</p>
             ) : (
               <div className="t-body mt-auto rounded-md bg-fill p-2.5 text-ui text-smoke">
-                The runtime is bundled with the app. The model is downloaded once and stored in app data.
+                {t("setup.card.note")}
               </div>
             )}
 
@@ -162,16 +170,21 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
                 disabled={busy || !bootstrap.platform.bundled_asr}
                 onClick={downloadAndContinue}
               >
-                {installed ? "Continue" : model?.status === "paused" || download?.paused ? "Resume Download" : "Download Model and Continue"}
+                {installed
+                  ? t("setup.continue")
+                  : model?.status === "paused" || download?.paused
+                    ? t("setup.resume")
+                    : t("setup.downloadAndContinue")}
               </Button>
               <Button className="w-full" variant="secondary" disabled={busy} onClick={continueWithoutModel}>
-                Continue Without Model
+                {t("setup.skip")}
               </Button>
             </div>
           </aside>
         </div>
       </section>
-    </main>
+      </main>
+    </div>
   );
 }
 

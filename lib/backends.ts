@@ -6,6 +6,8 @@
  * Both backends run on the official QwenAudio/Fun-ASR llama.cpp CPU runtime.
  */
 
+import type { MessageKey, Translate } from "@/lib/i18n";
+
 /** Fun-ASR-Nano: SAN-M encoder + Qwen3-0.6B decoder. Slower, more accurate. */
 export const BACKEND_NANO = "funasr-nano-gguf-cpu";
 
@@ -15,11 +17,17 @@ export const BACKEND_SENSEVOICE = "funasr-sensevoice-gguf-cpu";
 /** Fallback when no model is selected yet. */
 export const DEFAULT_BACKEND = BACKEND_NANO;
 
-const BACKEND_LABELS: Record<string, string> = {
-  [BACKEND_NANO]: "Fun-ASR-Nano (accurate)",
-  [BACKEND_SENSEVOICE]: "SenseVoiceSmall (fast)",
+/**
+ * The model name is a proper noun and stays as it is in every locale; only the
+ * parenthetical — what choosing it costs you — is translated. An unknown
+ * backend falls back to its raw identifier, which is what a diagnostic wants.
+ */
+const BACKEND_LABEL_KEYS: Record<string, MessageKey> = {
+  [BACKEND_NANO]: "backend.nano",
+  [BACKEND_SENSEVOICE]: "backend.sensevoice",
 };
 
-export function backendLabel(backend: string): string {
-  return BACKEND_LABELS[backend] ?? backend;
+export function backendLabel(backend: string, t: Translate): string {
+  const key = BACKEND_LABEL_KEYS[backend];
+  return key ? t(key) : backend;
 }
