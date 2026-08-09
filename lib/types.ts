@@ -278,10 +278,20 @@ export type HotkeyBackend = "portal" | "evdev" | "ns-event" | "unavailable";
  * What the platform managed to set up. `detail` explains *why* a preferred
  * backend was skipped and is meant to be shown, not logged: a push-to-talk key
  * that silently does nothing is the worst failure mode.
+ *
+ * `ok` is the only field that answers "will holding this key record?". The call
+ * returning without an error does not: the XDG portal keeps a binding it has
+ * already made and reports success, so a chord the user just changed can come
+ * back accepted and inert.
  */
 export type HotkeyStatus = {
   backend: HotkeyBackend;
+  /** The chord that was asked for, canonicalised (`CTRL+ALT+space`). */
   trigger: string;
+  /** Whether a listener is running on exactly `trigger`. */
+  ok: boolean;
+  /** What the desktop says is bound, in its own words and language. */
+  boundDescription?: string | null;
   detail: string;
 };
 

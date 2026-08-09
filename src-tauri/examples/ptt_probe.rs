@@ -8,12 +8,16 @@ fn main() {
     let secs: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(12);
 
     let start = Instant::now();
-    let listener = fun_asr_desktop_lib::hotkey_start_for_probe(&trigger, move |edge| {
+    let status = fun_asr_desktop_lib::hotkey_start_for_probe(&trigger, move |edge| {
         println!("  {:?}  @{:.2}s", edge, start.elapsed().as_secs_f32());
     });
-    println!("backend = {:?}", listener.0);
-    println!("trigger = {}", listener.1);
-    println!("detail  = {}", listener.2);
+    println!("backend = {:?}", status.backend);
+    println!("trigger = {}", status.trigger);
+    // The one to read. A binding can be accepted and still not be the chord
+    // that was asked for.
+    println!("ok      = {}", status.ok);
+    println!("bound   = {:?}", status.bound_description);
+    println!("detail  = {}", status.detail);
     println!("listening {secs}s ...");
     std::thread::sleep(Duration::from_secs(secs));
     println!("done");

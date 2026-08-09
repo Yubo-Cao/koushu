@@ -6,12 +6,10 @@ pub mod llm;
 mod panel;
 mod tray;
 
-/// Test hook for `examples/ptt_probe.rs`: start a listener and hand back the
-/// resolved backend so the fallback chain can be exercised without the GUI.
-pub fn hotkey_start_for_probe<F>(
-    trigger: &str,
-    on_edge: F,
-) -> (hotkey::HotkeyBackend, String, String)
+/// Test hook for `examples/ptt_probe.rs`: start a listener and hand back what
+/// the platform reported, so the fallback chain and the "the desktop kept its
+/// own binding" case can both be exercised without the GUI.
+pub fn hotkey_start_for_probe<F>(trigger: &str, on_edge: F) -> hotkey::HotkeyStatus
 where
     F: Fn(hotkey::PttEdge) + Send + Sync + 'static,
 {
@@ -19,7 +17,7 @@ where
     let status = listener.status.clone();
     // Leak deliberately: the probe process exits when it is done listening.
     std::mem::forget(listener);
-    (status.backend, status.trigger, status.detail)
+    status
 }
 
 use arboard::Clipboard;
@@ -148,6 +146,16 @@ struct AppState {
     audio_capture: Mutex<Option<AudioCaptureHandle>>,
     streaming: Mutex<Option<StreamingHandle>>,
     push_to_talk: Mutex<Option<hotkey::HotkeyListener>>,
+    /// The voice bar's edge channel, kept so the hotkey can be rebound without
+    /// it. Changing the chord happens in the settings window, which has no way
+    /// to hand the bar's channel over; holding it here is what lets the new
+    /// binding keep delivering to the window that is listening.
+    push_to_talk_channel: Mutex<Option<Channel<PushToTalkEvent>>>,
+    /// The last binding attempt's outcome. Kept beside the listener rather than
+    /// read off it, because it has to outlive a listener that was dropped on
+    /// purpose: while the user records a replacement chord there is nothing
+    /// bound, and this is what the new binding gets compared against.
+    push_to_talk_report: Mutex<Option<hotkey::HotkeyStatus>>,
     /// Where the voice bar is docked. A resize has to re-apply this, otherwise
     /// the pill grows away from its edge instead of staying against it.
     voice_bar_anchor: Mutex<panel::PanelAnchor>,
@@ -1361,6 +1369,21 @@ async fn format_transcript(
 /// to hold with one hand.
 const DEFAULT_PTT_TRIGGER: &str = "CTRL+ALT+space";
 
+/// The user's chord, if they have set one. Absent means the default.
+const PTT_TRIGGER_SETTING: &str = "hotkey.pushToTalk";
+
+/// Broadcast whenever the binding changes, so the voice bar's label and the
+/// settings window agree without either polling the other.
+const HOTKEY_EVENT: &str = "fun-asr://hotkey-changed";
+
+/// The chord push-to-talk should be listening on right now.
+fn configured_ptt_trigger(state: &AppState) -> String {
+    setting_value(state, PTT_TRIGGER_SETTING)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| DEFAULT_PTT_TRIGGER.to_string())
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(
     rename_all = "camelCase",
@@ -1373,6 +1396,46 @@ enum PushToTalkEvent {
     Released,
 }
 
+/// Bind the hotkey and route its edges to `channel`, replacing any previous
+/// binding. Returns what actually happened, which is not always what was asked
+/// for — see `HotkeyStatus::ok`.
+fn bind_push_to_talk(
+    state: &AppState,
+    trigger: &str,
+    channel: Channel<PushToTalkEvent>,
+) -> Result<hotkey::HotkeyStatus, String> {
+    let listener = hotkey::start(trigger, move |edge| {
+        let _ = channel.send(match edge {
+            hotkey::PttEdge::Pressed => PushToTalkEvent::Pressed,
+            hotkey::PttEdge::Released => PushToTalkEvent::Released,
+        });
+    });
+    let status = listener.status.clone();
+    // Logged with `ok`, never as a bare "bound": the whole point of that field
+    // is that a binding can be accepted and still not be the chord asked for,
+    // and a log line that says "bound" regardless is how that gets missed.
+    eprintln!(
+        "[hotkey] {} backend={:?} ok={} bound={:?} — {}",
+        status.trigger, status.backend, status.ok, status.bound_description, status.detail
+    );
+
+    let mut slot = state
+        .push_to_talk
+        .lock()
+        .map_err(|_| "Push-to-talk lock poisoned".to_string())?;
+    // Replacing the previous listener drops it, releasing the old binding.
+    *slot = Some(listener);
+    state
+        .push_to_talk_report
+        .lock()
+        .map_err(|_| "Push-to-talk lock poisoned".to_string())?
+        .replace(status.clone());
+    Ok(status)
+}
+
+/// `trigger` is for a caller that already knows the chord; passing nothing
+/// takes the stored one, which is how the voice bar picks up the user's choice
+/// at startup without having to read the settings table itself.
 #[tauri::command]
 fn start_push_to_talk(
     state: tauri::State<'_, AppState>,
@@ -1381,22 +1444,117 @@ fn start_push_to_talk(
 ) -> Result<hotkey::HotkeyStatus, String> {
     let trigger = trigger
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_PTT_TRIGGER.to_string());
+        .unwrap_or_else(|| configured_ptt_trigger(&state));
 
-    let listener = hotkey::start(&trigger, move |edge| {
-        let _ = on_event.send(match edge {
-            hotkey::PttEdge::Pressed => PushToTalkEvent::Pressed,
-            hotkey::PttEdge::Released => PushToTalkEvent::Released,
-        });
-    });
-    let status = listener.status.clone();
+    state
+        .push_to_talk_channel
+        .lock()
+        .map_err(|_| "Push-to-talk lock poisoned".to_string())?
+        .replace(on_event.clone());
 
-    let mut slot = state
+    bind_push_to_talk(&state, &trigger, on_event)
+}
+
+/// The last binding attempt's outcome, for a window that did not start it.
+/// `None` means nothing has been bound yet.
+#[tauri::command]
+fn push_to_talk_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<hotkey::HotkeyStatus>, String> {
+    Ok(state
+        .push_to_talk_report
+        .lock()
+        .map_err(|_| "Push-to-talk lock poisoned".to_string())?
+        .clone())
+}
+
+/// Release the binding while the user records a new one.
+///
+/// Without this, recording a chord in Settings would fire the very hotkey being
+/// replaced — and under the portal the compositor takes the current chord for
+/// itself, so the webview would never even see those keys.
+#[tauri::command]
+fn suspend_push_to_talk(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state
         .push_to_talk
         .lock()
-        .map_err(|_| "Push-to-talk lock poisoned".to_string())?;
-    // Replacing the previous listener drops it, releasing the old binding.
-    *slot = Some(listener);
+        .map_err(|_| "Push-to-talk lock poisoned".to_string())?
+        .take();
+    Ok(())
+}
+
+/// Store a chord and put it into effect, answering with what really happened.
+///
+/// Passing `None` restores the default. The setting is written even when the
+/// binding does not take, because it is the user's choice and losing it would
+/// be its own bug — the returned status is what says whether it is live, and
+/// the UI is expected to show that rather than assume.
+#[tauri::command]
+fn set_push_to_talk_trigger(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    trigger: Option<String>,
+) -> Result<hotkey::HotkeyStatus, String> {
+    let requested = trigger
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_PTT_TRIGGER.to_string());
+    let requested = hotkey::normalize_trigger(&requested)?;
+
+    // What the desktop reported last time. Under the portal a request that is
+    // quietly ignored comes back describing the *old* binding, so an unchanged
+    // description alongside a changed chord is proof the change did not take —
+    // and unlike reading the description itself, that comparison does not
+    // depend on what language the desktop is running in.
+    let previous = state
+        .push_to_talk_report
+        .lock()
+        .map_err(|_| "Push-to-talk lock poisoned".to_string())?
+        .clone();
+
+    let channel = state
+        .push_to_talk_channel
+        .lock()
+        .map_err(|_| "Push-to-talk lock poisoned".to_string())?
+        .clone();
+
+    // Stored before binding: the choice is the user's either way, and a chord
+    // the desktop refuses today may well be free tomorrow.
+    set_setting_inner(&state, PTT_TRIGGER_SETTING, &requested)?;
+
+    let Some(channel) = channel else {
+        // Saved, but nothing is listening to bind it to. Reported rather than
+        // swallowed, because "saved" and "working" are what this whole command
+        // exists to keep apart.
+        return Ok(hotkey::HotkeyStatus {
+            backend: hotkey::HotkeyBackend::Unavailable,
+            trigger: requested,
+            ok: false,
+            bound_description: None,
+            detail: "Saved, but the voice bar is not running, so nothing is listening for it yet."
+                .to_string(),
+        });
+    };
+    let mut status = bind_push_to_talk(&state, &requested, channel)?;
+
+    if let Some(old) = previous.filter(|old| old.bound_description.is_some()) {
+        if old.trigger != requested && status.bound_description == old.bound_description {
+            let bound = old.bound_description.unwrap_or_default();
+            status.ok = false;
+            status.detail = format!(
+                "The desktop kept its own binding for this shortcut: {bound}. A shortcut the \
+                 portal has already bound can only be changed in the desktop's own shortcut \
+                 settings."
+            );
+            state
+                .push_to_talk_report
+                .lock()
+                .map_err(|_| "Push-to-talk lock poisoned".to_string())?
+                .replace(status.clone());
+        }
+    }
+
+    let _ = app.emit(HOTKEY_EVENT, status.clone());
     Ok(status)
 }
 
@@ -1420,6 +1578,18 @@ fn stop_push_to_talk(state: tauri::State<'_, AppState>) -> Result<(), String> {
         .lock()
         .map_err(|_| "Push-to-talk lock poisoned".to_string())?;
     slot.take();
+    // The channel goes with it. Keeping it would let a later rebind report
+    // success while delivering edges to a window that has gone away.
+    state
+        .push_to_talk_channel
+        .lock()
+        .map_err(|_| "Push-to-talk lock poisoned".to_string())?
+        .take();
+    state
+        .push_to_talk_report
+        .lock()
+        .map_err(|_| "Push-to-talk lock poisoned".to_string())?
+        .take();
     Ok(())
 }
 
@@ -2990,6 +3160,8 @@ pub fn run() {
                 audio_capture: Mutex::new(None),
                 streaming: Mutex::new(None),
                 push_to_talk: Mutex::new(None),
+                push_to_talk_channel: Mutex::new(None),
+                push_to_talk_report: Mutex::new(None),
                 voice_bar_anchor: Mutex::new(panel::PanelAnchor::BottomCenter),
                 voice_bar_drag: Mutex::new(None),
             });
@@ -3056,6 +3228,9 @@ pub fn run() {
             stop_streaming_transcription,
             start_push_to_talk,
             stop_push_to_talk,
+            suspend_push_to_talk,
+            push_to_talk_status,
+            set_push_to_talk_trigger,
             hotkey_permission,
             request_hotkey_permission,
             get_trial_status,

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/Button";
+import { HotkeyRecorder } from "@/components/HotkeyRecorder";
 import { TitleBar } from "@/components/TitleBar";
 import { WindowFrame } from "@/components/WindowFrame";
 import { DownloadProgress } from "@/components/DownloadProgress";
@@ -393,6 +394,17 @@ export default function SettingsPage() {
                     )}
                   />
                 </div>
+              </Panel>
+
+              {/* Applied the moment a chord is recorded, not on Save. Whether
+                  a global shortcut can actually be taken is something only the
+                  desktop can answer, and the answer is worth nothing three
+                  tabs and one button click after the key was pressed. */}
+              <Panel title={t("settings.hotkey.title")}>
+                <HotkeyRecorder
+                  mac={bootstrap.platform.os === "macos"}
+                  stored={String(bootstrap.settings["hotkey.pushToTalk"] || "")}
+                />
               </Panel>
 
               <Panel title={t("settings.storage.title")}>

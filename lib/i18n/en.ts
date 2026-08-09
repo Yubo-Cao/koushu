@@ -198,6 +198,38 @@ export const en = {
     "Sends each phrase as you finish it, instead of the whole transcript at the end. Faster, but less accurate — short phrases decode worse than a full recording, and once text is in another app it cannot be corrected.",
   "settings.storage.save": "Save Settings",
 
+  // ---- Push-to-talk shortcut ---------------------------------------------
+  "settings.hotkey.title": "Push-to-talk shortcut",
+  "settings.hotkey.desc": "Hold it to record anywhere; let go to transcribe.",
+  "settings.hotkey.change": "Change",
+  "settings.hotkey.recording": "Press the new shortcut",
+  "settings.hotkey.recordingHint": "Modifier plus one key. Esc cancels.",
+  "settings.hotkey.reset": "Restore default",
+  // The one key in the supported set whose name is a word rather than a glyph.
+  "settings.hotkey.key.space": "Space",
+  "settings.hotkey.needsModifier":
+    "Add Ctrl, Alt, Shift or Super. On its own that key would be taken away from every text field on the system.",
+  "settings.hotkey.unsupportedKey":
+    "That key cannot be used. Pick a letter, a digit, a function key or the space bar.",
+  "settings.hotkey.applying": "Applying",
+  "settings.hotkey.live": "Live. Hold {chord} to talk.",
+  // Not "failed to save": the choice is stored either way, and what the user
+  // needs to know is that holding the key will do nothing.
+  "settings.hotkey.notBound": "Not listening. Holding this will do nothing.",
+  "settings.hotkey.conflict":
+    "The desktop kept its own binding, {bound}, and would not hand this shortcut over. Change it under {path} in the system settings.",
+  "settings.hotkey.conflictPath": "Shortcuts › Fun ASR Desktop",
+  "settings.hotkey.boundAs": "The desktop reports this as {bound}.",
+  "settings.hotkey.listener": "Listening via",
+  "settings.hotkey.backend.portal": "desktop portal",
+  "settings.hotkey.backend.evdev": "keyboard device",
+  "settings.hotkey.backend.ns-event": "macOS event tap",
+  "settings.hotkey.backend.unavailable": "nothing",
+  // Only the portal can refuse to move a binding, so only the portal gets the
+  // warning that the recorder may not be the last word.
+  "settings.hotkey.portalNote":
+    "The desktop owns portal shortcuts. The first one is granted here; later changes may have to be made in its own shortcut settings.",
+
   "settings.trial.title": "Trial",
   "settings.trial.licensed": "Licensed. Thank you — that genuinely funds this.",
   "settings.trial.used": "{minutes} min",

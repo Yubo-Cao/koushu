@@ -22,6 +22,68 @@ use evdev::{Device, EventSummary, KeyCode};
 
 use super::{HotkeyBackend, HotkeyStatus, PttEdge};
 
+/// The evdev code for a main key, by the name `normalize_trigger` produces
+/// (already upper-cased by the caller).
+///
+/// The letters need a table. `input-event-codes.h` numbers them by where they
+/// sit on a US keyboard, not by the alphabet — `KEY_A` is 30 and `KEY_B` is 48,
+/// with the whole QWERTY top row in between — so deriving them by adding an
+/// offset to `KEY_A` silently yields a different key for all 25 letters after
+/// A. Digits are contiguous but start at `1` and wrap `0` around to the end,
+/// and the function keys run F1..F10, then F11/F12, then F13 far away.
+fn key_code(name: &str) -> Option<KeyCode> {
+    if name == "SPACE" {
+        return Some(KeyCode::KEY_SPACE);
+    }
+    if name.len() == 1 {
+        let byte = name.as_bytes()[0];
+        if byte.is_ascii_uppercase() {
+            const LETTERS: [KeyCode; 26] = [
+                KeyCode::KEY_A,
+                KeyCode::KEY_B,
+                KeyCode::KEY_C,
+                KeyCode::KEY_D,
+                KeyCode::KEY_E,
+                KeyCode::KEY_F,
+                KeyCode::KEY_G,
+                KeyCode::KEY_H,
+                KeyCode::KEY_I,
+                KeyCode::KEY_J,
+                KeyCode::KEY_K,
+                KeyCode::KEY_L,
+                KeyCode::KEY_M,
+                KeyCode::KEY_N,
+                KeyCode::KEY_O,
+                KeyCode::KEY_P,
+                KeyCode::KEY_Q,
+                KeyCode::KEY_R,
+                KeyCode::KEY_S,
+                KeyCode::KEY_T,
+                KeyCode::KEY_U,
+                KeyCode::KEY_V,
+                KeyCode::KEY_W,
+                KeyCode::KEY_X,
+                KeyCode::KEY_Y,
+                KeyCode::KEY_Z,
+            ];
+            return Some(LETTERS[usize::from(byte - b'A')]);
+        }
+        return match byte {
+            b'0' => Some(KeyCode::KEY_0),
+            b'1'..=b'9' => Some(KeyCode::new(KeyCode::KEY_1.code() + u16::from(byte - b'1'))),
+            _ => None,
+        };
+    }
+    let number: u16 = name.strip_prefix('F')?.parse().ok()?;
+    match number {
+        1..=10 => Some(KeyCode::new(KeyCode::KEY_F1.code() + number - 1)),
+        11 => Some(KeyCode::KEY_F11),
+        12 => Some(KeyCode::KEY_F12),
+        13..=24 => Some(KeyCode::new(KeyCode::KEY_F13.code() + number - 13)),
+        _ => None,
+    }
+}
+
 /// Translate a portal-style trigger string ("CTRL+ALT+space") into key codes.
 /// Returns the modifiers that must be held and the main key.
 fn parse_trigger(trigger: &str) -> Result<(Vec<Vec<KeyCode>>, KeyCode), String> {
@@ -39,16 +101,11 @@ fn parse_trigger(trigger: &str) -> Result<(Vec<Vec<KeyCode>>, KeyCode), String> 
             "SUPER" | "META" | "LOGO" => {
                 modifiers.push(vec![KeyCode::KEY_LEFTMETA, KeyCode::KEY_RIGHTMETA])
             }
-            "SPACE" => main = Some(KeyCode::KEY_SPACE),
-            other if other.len() == 1 && other.is_ascii() => {
-                let c = other.as_bytes()[0];
-                let code = match c {
-                    b'A'..=b'Z' => KeyCode::new(KeyCode::KEY_A.code() + u16::from(c - b'A')),
-                    _ => return Err(format!("unsupported key '{other}' in trigger")),
-                };
-                main = Some(code);
+            other => {
+                main = Some(
+                    key_code(other).ok_or_else(|| format!("unsupported key '{other}' in trigger"))?,
+                )
             }
-            other => return Err(format!("unsupported key '{other}' in trigger")),
         }
     }
 
@@ -166,10 +223,59 @@ where
         HotkeyStatus {
             backend: HotkeyBackend::Evdev,
             trigger: trigger.to_string(),
+            // Nothing mediates this binding, so what was asked for is what is
+            // watched for. The cost is that a chord the desktop also uses will
+            // fire both, which this backend has no way to find out about.
+            ok: true,
+            bound_description: None,
             detail: format!(
                 "Reading {device_count} keyboard device(s) directly. Key events are matched and discarded in-process; nothing is stored or sent."
             ),
         },
         join,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{key_code, parse_trigger};
+    use evdev::KeyCode;
+
+    #[test]
+    fn letters_are_not_alphabetical_in_evdev() {
+        // The regression this table exists for: `KEY_A + (c - 'A')` gives 39
+        // for J, which is KEY_APOSTROPHE, and 31 for B, which is KEY_S.
+        assert_eq!(key_code("A"), Some(KeyCode::KEY_A));
+        assert_eq!(key_code("B"), Some(KeyCode::KEY_B));
+        assert_eq!(key_code("J"), Some(KeyCode::KEY_J));
+        assert_eq!(key_code("Z"), Some(KeyCode::KEY_Z));
+        assert_ne!(key_code("J"), Some(KeyCode::new(KeyCode::KEY_A.code() + 9)));
+    }
+
+    #[test]
+    fn digits_wrap_zero_to_the_end() {
+        assert_eq!(key_code("1"), Some(KeyCode::KEY_1));
+        assert_eq!(key_code("9"), Some(KeyCode::KEY_9));
+        assert_eq!(key_code("0"), Some(KeyCode::KEY_0));
+    }
+
+    #[test]
+    fn function_keys_span_their_three_runs() {
+        assert_eq!(key_code("F1"), Some(KeyCode::KEY_F1));
+        assert_eq!(key_code("F10"), Some(KeyCode::KEY_F10));
+        assert_eq!(key_code("F11"), Some(KeyCode::KEY_F11));
+        assert_eq!(key_code("F12"), Some(KeyCode::KEY_F12));
+        assert_eq!(key_code("F13"), Some(KeyCode::KEY_F13));
+        assert_eq!(key_code("F24"), Some(KeyCode::KEY_F24));
+        assert_eq!(key_code("F25"), None);
+    }
+
+    #[test]
+    fn a_chord_parses_into_its_modifiers_and_key() {
+        let (modifiers, main) = parse_trigger("CTRL+ALT+SHIFT+j").unwrap();
+        assert_eq!(main, KeyCode::KEY_J);
+        assert_eq!(modifiers.len(), 3);
+        assert!(modifiers[0].contains(&KeyCode::KEY_LEFTCTRL));
+        assert!(parse_trigger("CTRL+ALT+nope").is_err());
+    }
 }

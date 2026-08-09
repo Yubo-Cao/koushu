@@ -3,6 +3,7 @@
 import { GripVertical, Loader2, Mic, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_BACKEND } from "@/lib/backends";
+import { formatTrigger } from "@/lib/hotkey";
 import { useT, type MessageKey } from "@/lib/i18n";
 import {
   autoPasteText,
@@ -32,6 +33,9 @@ import type {
 } from "@/lib/types";
 
 const idleLevel: AudioLevelInfo = { rms: 0, peak: 0, db: -90, percent: 0 };
+
+/** Emitted by Rust whenever the push-to-talk binding changes. */
+const HOTKEY_EVENT = "fun-asr://hotkey-changed";
 
 /** Committed preview segments joined with the live partial. */
 function joinPreview(segments: string[], partial: string): string {
@@ -118,18 +122,39 @@ export default function VoiceBar() {
     );
   }, [phase, partial, status, hotkey]);
 
+  // No trigger: the backend uses the stored one, so the user's chord is in
+  // effect from launch without this window having to read the settings table.
   useEffect(() => {
     let cancelled = false;
     startPushToTalk(undefined, handlePushToTalk)
       .then((value) => {
         if (cancelled) return;
         setHotkey(value);
-        if (value.backend === "unavailable") setStatus(value.detail);
+        if (!value.ok) setStatus(value.detail);
       })
       .catch((error) => setStatus(String(error)));
     return () => {
       cancelled = true;
       void stopPushToTalk().catch(() => {});
+    };
+  }, []);
+
+  // Changing the chord happens in the settings window, which rebinds the
+  // listener this window owns. Following the broadcast is what keeps the label
+  // from advertising a key that no longer does anything.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) => listen<HotkeyStatus>(HOTKEY_EVENT, (event) => setHotkey(event.payload)))
+      .then((stop) => {
+        if (cancelled) stop();
+        else unlisten = stop;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
   }, []);
 
@@ -293,6 +318,22 @@ export default function VoiceBar() {
 
   const level = Math.max(0, Math.min(100, inputLevel.percent));
 
+  /*
+    The chip names the key that actually starts a recording, which is not
+    always the one the app asked for. When the desktop kept a binding of its
+    own, its description of that binding is the truthful thing to print — and
+    when nothing is bound at all, saying so beats printing a chord that does
+    nothing.
+  */
+  const hotkeyLabel = !hotkey
+    ? "…"
+    : hotkey.ok
+      ? formatTrigger(hotkey.trigger, {
+          mac: navigator.userAgent.includes("Mac OS X"),
+          spaceLabel: t("settings.hotkey.key.space"),
+        })
+      : hotkey.boundDescription || t("bar.noHotkey");
+
   return (
     <main
       data-transparent="true"
@@ -316,7 +357,7 @@ export default function VoiceBar() {
           "glass-pill rim inline-flex select-none items-center gap-2 rounded-pill",
           "py-1.5 pl-1.5 pr-2",
         ].join(" ")}
-        title={hotkey?.trigger ?? ""}
+        title={hotkeyLabel}
       >
         <button
           className={[
@@ -343,7 +384,7 @@ export default function VoiceBar() {
         {/* Idle is just the button and the binding, nothing more. */}
         {!expanded ? (
           <span className="t-micro rounded-md bg-fill px-1.5 py-[3px] text-meta leading-none font-medium whitespace-nowrap text-smoke">
-            {hotkey?.backend === "unavailable" ? t("bar.noHotkey") : hotkey?.trigger || "…"}
+            {hotkeyLabel}
           </span>
         ) : null}
 

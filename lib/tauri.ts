@@ -154,6 +154,29 @@ export async function stopPushToTalk(): Promise<void> {
   await invokeCommand("stop_push_to_talk");
 }
 
+/**
+ * Store a chord and put it into effect. `null` restores the default.
+ *
+ * The returned status is the answer to "does the new key work?", and it is not
+ * the same question as whether this call threw. Callers must read `ok`.
+ */
+export async function setPushToTalkTrigger(trigger: string | null): Promise<HotkeyStatus> {
+  return invokeCommand<HotkeyStatus>("set_push_to_talk_trigger", { trigger });
+}
+
+/** What push-to-talk is doing, for a window that did not start it. */
+export async function pushToTalkStatus(): Promise<HotkeyStatus | null> {
+  return invokeCommand<HotkeyStatus | null>("push_to_talk_status");
+}
+
+/**
+ * Let go of the binding while a new chord is being recorded, so pressing the
+ * current one records it instead of starting a recording.
+ */
+export async function suspendPushToTalk(): Promise<void> {
+  await invokeCommand("suspend_push_to_talk");
+}
+
 export async function resizeVoiceBar(width: number, height: number): Promise<void> {
   await invokeCommand("resize_voice_bar", { width, height });
 }

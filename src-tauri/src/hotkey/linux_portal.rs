@@ -79,6 +79,92 @@ trait Request {
 
 const SHORTCUT_ID: &str = "push_to_talk";
 
+/// What the portal says is bound to our shortcut, in the desktop's own words.
+///
+/// `BindShortcuts` answers with the shortcuts it ended up with, and that answer
+/// is the only honest source for what is live. `preferred_trigger` is, as the
+/// name says, a preference: the XDG spec has the portal keep a binding that
+/// already exists, and KDE does exactly that — it returns success while leaving
+/// the old chord in place. Without reading this back, changing the hotkey would
+/// look like it worked every single time.
+fn bound_description(results: &std::collections::HashMap<String, OwnedValue>) -> Option<String> {
+    let shortcuts: Vec<(String, std::collections::HashMap<String, OwnedValue>)> =
+        results.get("shortcuts")?.try_clone().ok()?.try_into().ok()?;
+    let (_, meta) = shortcuts.into_iter().find(|(id, _)| id == SHORTCUT_ID)?;
+    let description = meta.get("trigger_description")?;
+    String::try_from(description.try_clone().ok()?).ok()
+}
+
+/// Modifier tokens as desktops spell them, mapped onto our own names.
+///
+/// Only the modifiers are worth a table: every desktop writes them in Latin
+/// letters or the Mac symbols even when the rest of the string is localised
+/// (KDE in Chinese returns `Ctrl+Alt+空格`).
+fn description_modifier(token: &str) -> Option<&'static str> {
+    Some(match token.to_ascii_uppercase().as_str() {
+        "CTRL" | "CONTROL" | "STRG" | "^" | "⌃" => "CTRL",
+        "ALT" | "OPTION" | "⌥" => "ALT",
+        "SHIFT" | "⇧" => "SHIFT",
+        "META" | "SUPER" | "LOGO" | "WIN" | "WINDOWS" | "CMD" | "COMMAND" | "⌘" => "LOGO",
+        _ => return None,
+    })
+}
+
+/// Whether the desktop's description names the chord we asked for.
+///
+/// `None` means "cannot tell", which is a real answer here and is not the same
+/// as "no". The description is written for humans and is translated, so the one
+/// key whose name varies by language — the space bar — cannot always be
+/// checked. Letters, digits and function keys are printed as themselves in
+/// every locale, so a difference there is a genuine mismatch and is reported as
+/// one; guessing either way would defeat the point of asking.
+fn describes_chord(requested: &str, description: &str) -> Option<bool> {
+    let mut wanted_modifiers: Vec<&str> = Vec::new();
+    let mut wanted_key = "";
+    for part in requested.split('+') {
+        // `requested` has been through `normalize_trigger`, so anything that is
+        // not one of our modifier names is the main key.
+        if matches!(part, "CTRL" | "ALT" | "SHIFT" | "LOGO") {
+            wanted_modifiers.push(part);
+        } else {
+            wanted_key = part;
+        }
+    }
+
+    let mut modifiers: Vec<&str> = Vec::new();
+    let mut keys: Vec<&str> = Vec::new();
+    for token in description.split('+') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        match description_modifier(token) {
+            Some(name) => modifiers.push(name),
+            None => keys.push(token),
+        }
+    }
+    if keys.len() != 1 {
+        return None;
+    }
+    modifiers.sort_unstable();
+    modifiers.dedup();
+    wanted_modifiers.sort_unstable();
+    if modifiers != wanted_modifiers {
+        return Some(false);
+    }
+
+    let key = keys[0];
+    if key.eq_ignore_ascii_case(wanted_key) {
+        return Some(true);
+    }
+    // A localised name for a key we cannot recognise. Only `space` has one, so
+    // if that is not what we asked for, this is a different key.
+    if !key.is_ascii() {
+        return (wanted_key != "space").then_some(false);
+    }
+    Some(false)
+}
+
 /// Wait for a portal `Request` to answer. Every portal call is asynchronous:
 /// the method returns a request handle and the real answer arrives later as a
 /// `Response` signal.
@@ -146,7 +232,8 @@ where
         .bind_shortcuts(&session.as_ref(), vec![(SHORTCUT_ID, meta)], "", bind_options)
         .map_err(|err| err.to_string())?;
     // Binding can prompt the user, so allow a generous window.
-    await_response(&conn, &request, Duration::from_secs(60))?;
+    let bound = await_response(&conn, &request, Duration::from_secs(60))?;
+    let described = bound_description(&bound);
 
     let mut activated = shortcuts.receive_activated().map_err(|e| e.to_string())?;
     let mut deactivated = shortcuts.receive_deactivated().map_err(|e| e.to_string())?;
@@ -189,12 +276,61 @@ where
         }
     });
 
+    let matches = described
+        .as_deref()
+        .map(|description| describes_chord(trigger, description));
+    let ok = !matches!(matches, Some(Some(false)));
+    let detail = match (&described, matches) {
+        (Some(description), Some(Some(false))) => format!(
+            "The desktop kept its own binding for this shortcut: {description}. A shortcut the \
+             portal has already bound can only be changed in the desktop's own shortcut settings."
+        ),
+        (Some(description), _) => format!(
+            "Bound through the desktop portal as {description}. Remappable in system settings."
+        ),
+        (None, _) => {
+            "Bound through the desktop portal. Remappable in system settings.".to_string()
+        }
+    };
+
     Ok((
         HotkeyStatus {
             backend: HotkeyBackend::Portal,
             trigger: trigger.to_string(),
-            detail: "Bound through the desktop portal. Remappable in system settings.".to_string(),
+            ok,
+            bound_description: described,
+            detail,
         },
         join,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::describes_chord;
+
+    #[test]
+    fn reads_a_matching_description() {
+        assert_eq!(describes_chord("CTRL+ALT+space", "Ctrl+Alt+Space"), Some(true));
+        assert_eq!(describes_chord("CTRL+ALT+d", "Ctrl+Alt+D"), Some(true));
+        assert_eq!(describes_chord("SHIFT+LOGO+F5", "Meta+Shift+F5"), Some(true));
+    }
+
+    #[test]
+    fn catches_the_desktop_keeping_its_own_binding() {
+        // The case this whole readback exists for: KDE answers a request for
+        // Ctrl+Alt+D with success while still holding Ctrl+Alt+Space, and says
+        // so in the session language.
+        assert_eq!(describes_chord("CTRL+ALT+d", "Ctrl+Alt+空格"), Some(false));
+        assert_eq!(describes_chord("CTRL+ALT+d", "Ctrl+Alt+Space"), Some(false));
+        assert_eq!(describes_chord("CTRL+ALT+space", "Ctrl+Shift+Space"), Some(false));
+    }
+
+    #[test]
+    fn admits_when_it_cannot_tell() {
+        // Asked for space, given a translated name for some key: it is probably
+        // the space bar, and claiming a mismatch would be a false alarm.
+        assert_eq!(describes_chord("CTRL+ALT+space", "Ctrl+Alt+空格"), None);
+        assert_eq!(describes_chord("CTRL+ALT+space", "Ctrl+Alt"), None);
+    }
 }
