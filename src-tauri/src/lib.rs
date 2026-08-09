@@ -1,5 +1,6 @@
 pub mod asr_cloud;
 pub mod hotkey;
+pub mod inject;
 pub mod license;
 pub mod llm;
 mod panel;
@@ -2128,8 +2129,49 @@ fn copy_text(text: String) -> PasteResult {
     copy_text_native(&text)
 }
 
+/// Where the next utterance will be delivered.
+///
+/// Called when push-to-talk starts, not when text is ready. By the time the
+/// words exist the user may have switched windows, and the one thing worse than
+/// not inserting the transcript is inserting it into the wrong application.
+#[tauri::command]
+fn capture_inject_target() -> inject::Target {
+    inject::capture_target()
+}
+
+/// Insert text into a previously captured target.
+///
+/// `keepClipboard` is set for live, mid-utterance delivery: overwriting the
+/// clipboard once per spoken phrase would wipe whatever the user had copied,
+/// many times a minute. The final delivery leaves it unset so the finished
+/// transcript lands on the clipboard as well, where it can be pasted again.
+#[tauri::command]
+fn inject_text(
+    text: String,
+    target: Option<inject::Target>,
+    keep_clipboard: Option<bool>,
+) -> inject::InjectReport {
+    let target = target.unwrap_or_else(inject::capture_target);
+    inject::inject(&text, &target, keep_clipboard.unwrap_or(false))
+}
+
 #[tauri::command]
 fn auto_paste_text(text: String) -> PasteResult {
+    // Route through the injector so the chord matches the focused application.
+    // The old path always sent one hard-coded chord, which meant dictating into
+    // a terminal pasted nothing at all: terminals moved paste to Ctrl+Shift+V
+    // because Ctrl+V was already a terminal control code.
+    let report = inject::inject(&text, &inject::capture_target(), false);
+    if report.delivered || report.clipboard_used {
+        return PasteResult {
+            copied: report.clipboard_used || report.delivered,
+            pasted: report.delivered,
+            method: report.chord.clone(),
+            message: report.message.clone(),
+            session_type: env::var("XDG_SESSION_TYPE").ok(),
+        };
+    }
+
     let previous_clipboard = read_clipboard_text().ok();
     let copy_result = copy_text_native(&text);
     if !copy_result.copied {
@@ -2908,6 +2950,8 @@ pub fn run() {
             save_text_transcript,
             copy_text,
             auto_paste_text,
+            capture_inject_target,
+            inject_text,
             show_voice_bar,
             show_voice_bar_passive,
             anchor_voice_bar,
