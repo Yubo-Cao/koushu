@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -127,27 +128,52 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     every launch for the users this feature is for.
   */
   const [locale, setLocaleState] = useState<Locale | null>(null);
+  /** Set once the user picks a language, to stop the reconcile below racing it. */
+  const chosen = useRef(false);
 
   useEffect(() => {
     setLocaleState(readInitialLocale());
   }, []);
 
-  // The database is authoritative over the localStorage mirror. Absent means
-  // the user has never chosen, and "never chosen" keeps following the system
-  // rather than freezing whatever the system said on first launch.
+  /*
+    Reconcile the mirror against the row it mirrors.
+
+    The database is authoritative in *both* directions, which is the part that
+    is easy to get wrong. Adopting the row when it exists is obvious. The case
+    that bites is the row being absent while the mirror still holds a value —
+    the settings table was reset, or app data was restored from a backup taken
+    before the choice. "No row" means the user has never chosen, and a user who
+    has never chosen follows the system; if the stale mirror were left to stand
+    it would pin the app to a language nothing in the database asks for, with
+    no way back short of clearing site data. So the mirror is cleared and
+    detection runs again.
+
+    `chosen` guards the one race this opens: a user who changes the language
+    before the bootstrap round trip returns must not be overruled by the
+    pre-change snapshot it is carrying.
+  */
   useEffect(() => {
     let cancelled = false;
     getBootstrap()
       .then((data) => {
+        if (cancelled || chosen.current) return;
         const stored = data.settings?.[LOCALE_SETTING_KEY];
-        if (cancelled || !isLocale(stored)) return;
-        setLocaleState(stored);
+        if (isLocale(stored)) {
+          setLocaleState(stored);
+          try {
+            window.localStorage.setItem(STORAGE_KEY, stored);
+          } catch {}
+          return;
+        }
         try {
-          window.localStorage.setItem(STORAGE_KEY, stored);
+          window.localStorage.removeItem(STORAGE_KEY);
         } catch {}
+        setLocaleState(detectSystemLocale());
       })
       .catch(() => {
-        // Browser preview, or the backend is not up yet. The mirror stands.
+        // Browser preview, or the backend is not up yet. The mirror stands:
+        // without an answer from the database there is nothing to reconcile
+        // against, and guessing would throw away a real choice.
       });
     return () => {
       cancelled = true;
@@ -184,6 +210,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [locale]);
 
   const setLocale = useCallback((next: Locale) => {
+    chosen.current = true;
     setLocaleState(next);
     try {
       window.localStorage.setItem(STORAGE_KEY, next);
