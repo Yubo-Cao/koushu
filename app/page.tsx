@@ -24,6 +24,7 @@ import {
 } from "@/components/SessionSearch";
 import { SetupView } from "@/components/SetupView";
 import { TitleBar } from "@/components/TitleBar";
+import { WindowFrame } from "@/components/WindowFrame";
 import { DEFAULT_BACKEND } from "@/lib/backends";
 import { useT } from "@/lib/i18n";
 import {
@@ -447,12 +448,12 @@ export default function Home() {
   // frame, so without it there is nothing to drag and no way to close.
   if (!bootstrap) {
     return (
-      <div className="flex h-dvh flex-col">
+      <WindowFrame>
         <TitleBar brand={<span className="t-title text-ctl font-semibold">{t("common.appName")}</span>} />
         <main className="flex flex-1 items-center justify-center text-ctl text-smoke">
           {t("common.loading")}
         </main>
-      </div>
+      </WindowFrame>
     );
   }
 
@@ -475,7 +476,7 @@ export default function Home() {
       cannot be scrolled under gets an honest fill instead of a blur that
       resolves to the pixels it started with.
     */
-    <div className="flex h-dvh flex-col">
+    <WindowFrame>
       <Confetti fire={celebrate} onDone={() => setCelebrate(false)} />
 
       {/*
@@ -487,7 +488,7 @@ export default function Home() {
         window already has, carried up into the chrome instead of fought.
       */}
       <TitleBar
-        leadClassName="w-[calc(238px-0.5rem)] pr-2 lg:w-[calc(266px-0.5rem)]"
+        leadClassName="app-lead pr-2"
         brand={
           <>
             <h1 className="t-title text-ctl font-semibold">{t("common.appName")}</h1>
@@ -525,7 +526,7 @@ export default function Home() {
         </span>
       </TitleBar>
 
-      <main className="grid min-h-0 flex-1 grid-cols-[238px_minmax(0,1fr)] lg:grid-cols-[266px_minmax(0,1fr)]">
+      <main className="app-grid min-h-0 flex-1">
       {/* The New Session button is deliberately *outside* the scroll container.
           As a sticky glass strip it had session titles sliding under it and
           showing through the material, which reads as a rendering fault rather
@@ -632,7 +633,7 @@ export default function Home() {
               <SearchResults browser={browser} onOpen={openHit} />
             </div>
           ) : (
-          <div className="flex-1 px-5 py-5">
+          <div className="flex-1 px-4 py-4 min-[900px]:px-5 min-[900px]:py-5">
             {transcripts.length === 0 && !partial ? (
               <div className="flex h-full items-center justify-center text-center">
                 <div className="max-w-sm">
@@ -741,9 +742,17 @@ export default function Home() {
               cannot shrink its own text, so a fixed width either truncates the
               longest value ("Cloud transcription", a PipeWire device name) or
               reserves dead space for it; giving each a basis, a floor and a
-              ceiling lets the row spend whatever the window happens to have. */}
+              ceiling lets the row spend whatever the window happens to have.
+
+              The row wraps rather than overflows. Adding the floors up, the
+              controls need ~690px and the deck has ~900 at the default window
+              — but the same window on a 125% display is ~550, and the Download
+              button appears out of nowhere the first time a model is missing.
+              A row that cannot wrap answers that by pushing the meter off the
+              edge of the window; wrapping drops it onto a second line, which is
+              the honest outcome. */}
           <footer className="deck sticky bottom-0 z-20 mt-auto px-4 py-2.5">
-            <div className="flex w-full items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-x-2 gap-y-2">
               <Button
                 size="lg"
                 className="shrink-0"
@@ -760,7 +769,7 @@ export default function Home() {
               <SelectField
                 icon={<Boxes size={13} />}
                 title={t("home.deck.model")}
-                className="min-w-[148px] max-w-[228px] flex-[1.15_1_176px]"
+                className="min-w-[132px] max-w-[228px] flex-[1.15_1_176px]"
                 value={modelId}
                 onChange={setModelId}
               >
@@ -785,7 +794,7 @@ export default function Home() {
               <SelectField
                 icon={<Languages size={13} />}
                 title={t("home.deck.language")}
-                className="min-w-[104px] max-w-[150px] flex-[0.7_1_120px]"
+                className="min-w-[96px] max-w-[150px] flex-[0.7_1_120px]"
                 value={language}
                 onChange={setLanguage}
               >
@@ -802,7 +811,7 @@ export default function Home() {
                     ? t("home.deck.microphoneDefault", { name: defaultInput.name })
                     : t("home.deck.microphone")
                 }
-                className="min-w-[136px] max-w-[240px] flex-[1.15_1_180px]"
+                className="min-w-[120px] max-w-[240px] flex-[1.15_1_180px]"
                 value={audioInputId}
                 onChange={setAudioInputId}
                 disabled={recording}
@@ -818,7 +827,10 @@ export default function Home() {
                 ))}
               </SelectField>
 
-              <span className="ctl-sep" aria-hidden />
+              {/* The separator only exists while the row is genuinely one row.
+                  Once the meter wraps, a hairline stranded at the start of the
+                  second line reads as a stray mark rather than as grouping. */}
+              <span className="ctl-sep hidden min-[1150px]:block" aria-hidden />
 
               {audioInputs.length ? (
                 <InputLevel level={inputLevel} active={recording} />
@@ -832,7 +844,7 @@ export default function Home() {
         </div>
       </section>
       </main>
-    </div>
+    </WindowFrame>
   );
 }
 

@@ -142,6 +142,14 @@ export const en = {
   "settings.reload": "Reload settings",
   "settings.saved": "Settings saved.",
 
+  // Category rail. Labels are one word each: they sit in a 176px rail beside
+  // the panels they open, and a phrase there competes with the panel titles.
+  "settings.nav": "Settings categories",
+  "settings.tab.general": "General",
+  "settings.tab.models": "Models",
+  "settings.tab.services": "Services",
+  "settings.tab.about": "About",
+
   "settings.models.title": "Models",
 
   "settings.defaults.title": "Defaults",
@@ -178,6 +186,16 @@ export const en = {
   "settings.storage.title": "Storage",
   "settings.storage.retainAudio": "Retain audio files",
   "settings.storage.autoPaste": "Floating bar auto-paste",
+  "settings.storage.liveInsert": "Insert while speaking",
+  // States the trade rather than advertising the feature. Live insertion sends
+  // each phrase the moment it is decoded, so it never gets the accuracy that
+  // comes from decoding the whole recording at once — measured on this
+  // project's test clip, an isolated tail segment decoded to a completely
+  // different sentence. And text already in another application cannot be
+  // taken back: correcting it would mean synthesising backspaces into a
+  // document whose caret the user may have moved.
+  "settings.storage.liveInsertHint":
+    "Sends each phrase as you finish it, instead of the whole transcript at the end. Faster, but less accurate — short phrases decode worse than a full recording, and once text is in another app it cannot be corrected.",
   "settings.storage.save": "Save Settings",
 
   "settings.trial.title": "Trial",

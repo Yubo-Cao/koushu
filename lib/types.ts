@@ -130,6 +130,43 @@ export type PasteResult = {
   session_type?: string | null;
 };
 
+/**
+ * The application text will be inserted into.
+ *
+ * Captured when push-to-talk starts rather than when text is ready: by the time
+ * the words exist the user may have switched windows, and inserting a
+ * transcript into the wrong application is worse than not inserting it.
+ */
+export type InjectTarget = {
+  /** Wayland resourceClass / X11 WM_CLASS / macOS bundle id. */
+  appId?: string | null;
+  appName?: string | null;
+  pid?: number | null;
+  /**
+   * Whether a text-accepting element holds focus.
+   *
+   * `null` means the platform cannot tell. That is the honest answer on
+   * Wayland, where the only way to observe another application's text-input
+   * state is to become the input method — which would take the seat from the
+   * user's real IME. Only `false` is a reason to refuse.
+   */
+  acceptsText?: boolean | null;
+};
+
+/** How the text got there. `unicode` posts characters, so it needs no chord. */
+export type InjectMethod = "unicode" | "typed" | "pasted";
+
+export type InjectReport = {
+  delivered: boolean;
+  method?: InjectMethod | null;
+  /** The chord that was sent, when one was. */
+  chord?: string | null;
+  /** True when the clipboard had to be overwritten to carry the text. */
+  clipboardUsed: boolean;
+  target: InjectTarget;
+  message: string;
+};
+
 export type ModelDownloadEvent =
   | {
       event: "started";

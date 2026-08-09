@@ -10,6 +10,8 @@ import type {
   NativeAudioCaptureResult,
   FormatEvent,
   LlmSettings,
+  InjectReport,
+  InjectTarget,
   PasteResult,
   PushToTalkEvent,
   HotkeyStatus,
@@ -292,6 +294,31 @@ export async function autoPasteText(text: string): Promise<PasteResult> {
   return invokeCommand<PasteResult>("auto_paste_text", { text });
 }
 
+/** Resolve the focused application. Call at the start of an utterance. */
+export async function captureInjectTarget(): Promise<InjectTarget> {
+  return invokeCommand<InjectTarget>("capture_inject_target");
+}
+
+/**
+ * Insert text into a previously captured target.
+ *
+ * Set `keepClipboard` for live, mid-utterance delivery: overwriting the
+ * clipboard once per spoken phrase would wipe whatever the user had copied,
+ * many times a minute. Leave it unset for the final delivery so the finished
+ * transcript is also on the clipboard, where it can be pasted again.
+ */
+export async function injectText(
+  text: string,
+  target?: InjectTarget | null,
+  keepClipboard = false,
+): Promise<InjectReport> {
+  return invokeCommand<InjectReport>("inject_text", {
+    text,
+    target: target ?? null,
+    keepClipboard,
+  });
+}
+
 export async function showVoiceBar(): Promise<void> {
   await invokeCommand("show_voice_bar");
 }
@@ -302,4 +329,36 @@ export async function hideVoiceBar(): Promise<void> {
 
 export async function showSettingsWindow(): Promise<void> {
   await invokeCommand("show_settings_window");
+}
+
+/**
+ * Whether this window wants an app-drawn frame — a transparent ring around a
+ * rounded shell, with the shadow painted into it.
+ *
+ * This has to be asked directly, and it deliberately does *not* mean "the
+ * window is undecorated". Those came apart in practice: dropping decorations
+ * landed long before transparency did, and in between, a gutter opened on an
+ * opaque window rendered as a hard band of page background — a fake second
+ * frame around the real one. So the backend answers the question the frontend
+ * actually has ("is this window transparent, so a gutter is invisible?"), and
+ * returns false when transparency was tried and abandoned as well as when it
+ * was never attempted.
+ *
+ * The safe answer is false: no gutter costs a shadow, whereas a wrong true
+ * costs a visibly broken window.
+ */
+export type WindowChrome = {
+  csdGutter: boolean;
+  /** Width of the ring, in CSS pixels. The backend also adds it to the window
+   *  size, so taking the number from here is what keeps the two from drifting. */
+  gutter: number;
+};
+
+export async function getWindowChrome(): Promise<WindowChrome> {
+  const raw = await invokeCommand<Record<string, unknown>>("window_chrome");
+  // Accept either casing: whether the Rust struct carries a serde rename is not
+  // something this side should be able to be broken by.
+  const enabled = (raw?.["csd_gutter"] ?? raw?.["csdGutter"]) === true;
+  const size = Number(raw?.["gutter"]);
+  return { csdGutter: enabled, gutter: Number.isFinite(size) && size >= 0 ? size : 18 };
 }

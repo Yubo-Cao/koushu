@@ -4,6 +4,7 @@ import { ArrowRight, Check, Cpu, Database, Download, Shield } from "lucide-react
 import { useState } from "react";
 import { Button } from "@/components/Button";
 import { TitleBar } from "@/components/TitleBar";
+import { WindowFrame } from "@/components/WindowFrame";
 import { DownloadProgress } from "@/components/DownloadProgress";
 import { useT } from "@/lib/i18n";
 import { modelStatusLabel } from "@/lib/format";
@@ -101,7 +102,7 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
   }
 
   return (
-    <div className="flex h-dvh flex-col">
+    <WindowFrame>
       <TitleBar brand={<span className="t-title text-ctl font-semibold">{t("common.appName")}</span>} />
       <main className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
       <section className="mx-auto flex max-w-6xl flex-col px-5 py-6 md:px-6 md:py-8">
@@ -184,7 +185,7 @@ export function SetupView({ bootstrap, onDone, onModelsChanged }: SetupViewProps
         </div>
       </section>
       </main>
-    </div>
+    </WindowFrame>
   );
 }
 

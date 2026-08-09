@@ -185,6 +185,49 @@
   --r-md: 14px;
   --r-sm: 9px;
 
+  /* --- The window itself -------------------------------------------------
+     Defaults describe a window whose frame the *system* draws: no gutter, no
+     radius, no shadow, because the compositor owns all three. macOS is that
+     case, and so is a maximised window on any platform.
+
+     `[data-frame="csd"]` is set by `<WindowFrame>` once it knows the window is
+     undecorated. There the app draws its own frame, and the three values below
+     become load bearing:
+
+     - `--gutter` is a ring of *transparent window* around the visible shell.
+       Wayland compositors do not shadow a client-side-decorated surface — that
+       is KWin's documented behaviour, not a bug — so the shadow has to be a
+       `box-shadow` on the shell, and a box-shadow has nowhere to fall unless
+       the window extends past the shell. Without the gutter the shadow is
+       clipped to nothing and the rounded corners are cut square by the window
+       rectangle.
+     - The key shadow's reach is tuned to *equal* the gutter: offset 10 + half
+       of blur 24 − spread 4 = 18px. Any more and the compositor slices the
+       penumbra off along a visible straight line, which reads far worse than
+       no shadow at all.
+     - The gutter is not dead space. A Wayland surface receives pointer events
+       across its whole rectangle no matter what CSS says about
+       `pointer-events`, so a transparent margin would swallow clicks meant for
+       whatever is behind the window. `<WindowFrame>` fills the ring with
+       resize grips, which is also the affordance `set_decorations(false)` took
+       away in the first place. */
+  --gutter: 0px;
+  --r-window: 0px;
+  --shadow-window: none;
+
+  /* --- Responsive metrics ------------------------------------------------
+     The session sidebar, as one number rather than a Tailwind variant repeated
+     at every call site — the title bar's left zone has to track it exactly or
+     the app identity stops sitting over the sidebar.
+
+     The steps answer to the CSS viewport and to nothing else. A breakpoint
+     derived from "the window is 1240 logical pixels and this display runs at
+     125%, so the viewport is 992" expires the moment a second monitor is
+     plugged in: the same window is a different number of CSS pixels on every
+     display it is dragged to. These three numbers come from where the content
+     stops fitting, measured. */
+  --sidebar: 210px;
+
   /* --- Type scale --------------------------------------------------------
      Seven steps, each with its leading attached. This exists because the app
      had accumulated fifteen distinct one-off sizes — 10.5, 11, 11.5, 12, 12.5,
@@ -227,6 +270,17 @@
      a hardcoded #888f9c, which is a mid grey chosen for the light scheme and
      left to fend for itself in the dark one. */
   --chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 4.6 6 8l3.4-3.4' fill='none' stroke='%23666d7a' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+@media (min-width: 900px) {
+  :root {
+    --sidebar: 238px;
+  }
+}
+@media (min-width: 1150px) {
+  :root {
+    --sidebar: 266px;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -288,6 +342,61 @@
 
     --chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 4.6 6 8l3.4-3.4' fill='none' stroke='%23a9aeb9' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
+}
+
+/* The app-drawn window frame. Set by `<WindowFrame>` after it has confirmed the
+   window carries no system decorations, so a platform that keeps its own frame
+   never pays for this.
+
+   Light and dark carry different shadows on purpose. A shadow is a hole in the
+   light, and on a dark desktop a 26%-black penumbra is invisible; the dark
+   scheme leans harder and adds a faint light hairline, because on dark-on-dark
+   the thing that separates the window from the desktop is the top edge catching
+   light, not the shadow underneath. */
+:root[data-frame="csd"] {
+  /* 18px is the fallback; `<WindowFrame>` overwrites it with the number the
+     backend used to enlarge the window, so the ring and the window size can
+     never disagree about how wide it is. */
+  --gutter: 18px;
+  --r-window: 12px;
+
+  /* The key shadow's reach is written as a fraction of the gutter rather than
+     as three fixed pixel values, because the two have to move together: a
+     shadow that reaches further than the gutter gets sliced off by the window
+     rectangle along a straight line, which looks worse than no shadow.
+
+       reach = offset + blur/2 + spread
+             = 0.56g + (1.33g)/2 + (−0.22g)
+             = 0.56g + 0.665g − 0.22g
+             = 1.005g
+
+     The other three layers are small enough (reach ≤ 4px) to stay fixed. */
+  --shadow-window:
+    0 0 0 1px oklch(0 0 0 / 0.09),
+    0 0 12px -2px oklch(0 0 0 / 0.1),
+    0 2px 5px -1px oklch(0 0 0 / 0.15),
+    0 calc(var(--gutter) * 0.56) calc(var(--gutter) * 1.33) calc(var(--gutter) * -0.22)
+      oklch(0 0 0 / 0.26);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-frame="csd"] {
+    --shadow-window:
+      0 0 0 1px oklch(1 0 0 / 0.1),
+      0 0 14px -2px oklch(0 0 0 / 0.3),
+      0 2px 6px -1px oklch(0 0 0 / 0.4),
+      0 calc(var(--gutter) * 0.56) calc(var(--gutter) * 1.33) calc(var(--gutter) * -0.22)
+        oklch(0 0 0 / 0.62);
+  }
+}
+
+/* A maximised window has no outside to cast into. Keeping the gutter would
+   leave a transparent frame around a window the user asked to fill the screen,
+   and keeping the radius would show four notches of desktop at the corners. */
+:root[data-frame="csd"][data-window-state="maximized"] {
+  --gutter: 0px;
+  --r-window: 0px;
+  --shadow-window: none;
 }
 
 /* Frosted profile — only when the desktop behind the bar is genuinely blurred.
@@ -544,6 +653,182 @@
    2px by a padding it had explicitly overridden. Inside the layer, utilities
    win, which is what anyone writing className expects. */
 @layer components {
+  /* ---- The window frame --------------------------------------------------
+
+     Two boxes. `.win-frame` is the whole surface the compositor gave us and is
+     never painted; `.win-shell` is the window as the user perceives it, and
+     everything in the app lives inside it. With `--gutter: 0` the two are the
+     same rectangle, which is exactly what a system-decorated window wants. */
+  .win-frame {
+    position: relative;
+    display: flex;
+    height: 100dvh;
+    width: 100vw;
+    padding: var(--gutter);
+  }
+
+  .win-shell {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    /* Clips content to the rounded corners. `hidden` rather than `clip`
+       because this box never scrolls — the scrollers are nested inside it —
+       and `hidden` is the better-supported of the two on WebKitGTK. */
+    overflow: hidden;
+    border-radius: var(--r-window);
+    box-shadow: var(--shadow-window);
+  }
+
+  /* Resize grips. `set_decorations(false)` removes the compositor's resize
+     border along with the title bar, so without these the window cannot be
+     resized by the pointer at all.
+
+     They are deliberately *not* tied to the gutter. Whether the window can be
+     resized is a basic window capability; whether it has a transparent ring
+     around it is a visual enhancement that might be abandoned. Hanging the
+     first on the second would mean a failed shadow silently costs the user the
+     ability to resize their window.
+
+     `max(5px, var(--gutter))` is what makes both cases work from one rule. With
+     a gutter, the grip is the gutter exactly and never overlaps the shell — which
+     matters most on the right edge, where reaching inwards would sit on top of
+     the scrollbar. Without one it falls back to a 5px band hugging the shell's
+     edge, which is about what a compositor's own resize border gives you. */
+  .win-grip {
+    position: absolute;
+    z-index: 60;
+    display: none;
+  }
+  :root[data-window-resize="grips"]:not([data-window-state="maximized"]) .win-grip {
+    display: block;
+  }
+
+  .win-grip-n,
+  .win-grip-s {
+    left: calc(var(--gutter) + 14px);
+    right: calc(var(--gutter) + 14px);
+    height: max(5px, var(--gutter));
+  }
+  .win-grip-e,
+  .win-grip-w {
+    top: calc(var(--gutter) + 14px);
+    bottom: calc(var(--gutter) + 14px);
+    width: max(5px, var(--gutter));
+  }
+  .win-grip-n {
+    top: 0;
+    cursor: n-resize;
+  }
+  .win-grip-s {
+    bottom: 0;
+    cursor: s-resize;
+  }
+  .win-grip-w {
+    left: 0;
+    cursor: w-resize;
+  }
+  .win-grip-e {
+    right: 0;
+    cursor: e-resize;
+  }
+
+  .win-grip-nw,
+  .win-grip-ne,
+  .win-grip-sw,
+  .win-grip-se {
+    width: calc(var(--gutter) + 14px);
+    height: calc(var(--gutter) + 14px);
+  }
+  .win-grip-nw {
+    top: 0;
+    left: 0;
+    cursor: nw-resize;
+  }
+  .win-grip-ne {
+    top: 0;
+    right: 0;
+    cursor: ne-resize;
+  }
+  .win-grip-sw {
+    bottom: 0;
+    left: 0;
+    cursor: sw-resize;
+  }
+  .win-grip-se {
+    bottom: 0;
+    right: 0;
+    cursor: se-resize;
+  }
+
+  /* The main window's two columns, and the title-bar zone that has to line up
+     with the first of them. Both read `--sidebar`, so the two cannot drift. */
+  .app-grid {
+    display: grid;
+    grid-template-columns: var(--sidebar) minmax(0, 1fr);
+  }
+  .app-lead {
+    width: calc(var(--sidebar) - 0.5rem);
+  }
+
+  /* ---- Settings navigation ----------------------------------------------
+
+     A fixed rail of categories down the left, the way every settings window on
+     every desktop does it. The previous layout tiled every panel into one grid,
+     which meant the page had no shape: nothing said which settings belonged
+     together, and finding the LLM configuration meant reading past everything
+     else.
+
+     Written mobile-first so the narrow case is the base rule and the wide cases
+     add to it. The 760px step is where a text label stops fitting next to the
+     panel it labels; below it the rail keeps the icons and drops the words
+     rather than squeezing both. */
+  .settings-rail {
+    display: flex;
+    width: 64px;
+    flex: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    overflow-y: auto;
+    border-right: 1px solid var(--c-line-soft);
+    padding: 0.625rem 0.5rem;
+  }
+  .settings-tab-label {
+    display: none;
+  }
+  /* Lines the title bar's left zone up with the rail, so "Settings" sits over
+     the categories and the section name sits over its own panels — the split
+     the window already has, carried up into the chrome. */
+  .settings-lead {
+    width: calc(64px - 0.5rem);
+  }
+
+  @media (min-width: 760px) {
+    .settings-rail {
+      width: 176px;
+      align-items: stretch;
+    }
+    .settings-tab-label {
+      display: block;
+    }
+    .settings-lead {
+      width: calc(176px - 0.5rem);
+    }
+  }
+
+  /* The bar along the bottom of the settings window. Same fill and edge as the
+     control deck, minus the blur: the scroller is a sibling above it rather
+     than underneath it, so nothing ever passes below this bar and a
+     backdrop-filter would resolve to the pixels it started with. */
+  .footer-bar {
+    position: relative;
+    background-color: var(--deck-fill);
+    border-top: 1px solid var(--c-line);
+    box-shadow: inset 0 1px 0 0 var(--spec-top);
+  }
+
   /* Tabular figures wherever a number is being watched change — dB readouts,
      percentages, byte counts — so digits do not jitter the layout. */
   .tnum {
@@ -834,6 +1119,50 @@
     --ctl-fill: var(--c-fill);
   }
 
+  /* A switch, not a tick box.
+     `retain audio` and `auto-paste` are states you leave on or off, which is
+     what a switch says and what a checkbox does not — a checkbox belongs to a
+     list you are selecting *from*. It was also the one control on the settings
+     page still drawn by the platform, so next to the app's own selects and
+     buttons it read as a component from somewhere else.
+
+     Everything is on the input itself so the label stays a plain `<label>` and
+     the control keeps its native focus, keyboard and accessibility behaviour. */
+  .switch {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    flex: none;
+    width: 34px;
+    height: 20px;
+    border: 1px solid var(--c-line);
+    border-radius: var(--r-pill);
+    background-color: var(--c-track);
+    box-shadow: inset 0 1px 0 0 var(--spec-top);
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      border-color var(--dur-fast) var(--ease);
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--r-pill);
+    background: oklch(1 0 0);
+    box-shadow: 0 1px 2px oklch(0 0 0 / 0.28);
+    transition: transform var(--dur) var(--ease);
+  }
+  .switch:checked {
+    background-color: var(--c-accent);
+    border-color: transparent;
+  }
+  .switch:checked::after {
+    transform: translateX(14px);
+  }
+
   /* Native selects cannot be fully restyled in WebKit, but appearance:none plus
      a drawn chevron gets them onto the control recipe above. */
   .field {
@@ -940,6 +1269,72 @@
 body:has(> div > main[data-transparent="true"]),
 body:has(main[data-transparent="true"]) {
   background: transparent;
+}
+
+/* ==========================================================================
+   No transitions inside the transparent window
+   ==========================================================================
+
+   This is a platform constraint, not a taste call, and it is the fix for the
+   voice bar looking like two stacked layers: a translucent capsule with an
+   opaque near-black slab sitting inside it.
+
+   What was measured. On the pill, the 6px padding ring rendered at exactly the
+   intended alpha (rgb(160,162,166) over a white desktop = the 0.38 tint), while
+   the content box rendered at alpha **1.0** (rgb(17,17,23) = the same tint with
+   no transparency at all). Two translucent layers stacked would give
+   1 − (1 − 0.38)² ≈ 0.62, not 1.0, so nothing was stacking — something was
+   painting an opaque base.
+
+   What isolated it. Eight variants of the pill were rendered one at a time in
+   the real transparent window, each with one thing removed. The slab tracked
+   *transitions*, and nothing else:
+
+     - it appeared under the waveform bars, whose box is exactly the slab's box;
+     - it appeared on the variant with no `.glass-pill` class at all, only an
+       inline translucent background — so it is not this stylesheet's material;
+     - it disappeared on the one variant whose children carried no `transition`
+       and no `.press`, with everything else identical.
+
+   The mechanism is WebKitGTK promoting transition-bearing elements to
+   composited layers and backing those layers opaquely on a transparent surface.
+   The alpha channel of the layer is simply not preserved.
+
+   So: inside this window, transitions are unavailable, and the honest thing is
+   to say so once here rather than to keep discovering it. The cost is small and
+   arguably an improvement — the waveform is driven by a real 10 Hz level
+   signal, and interpolating between true samples only adds latency to a meter
+   whose entire job is to be immediate. `:active` feedback still works; it just
+   lands on the press instead of easing into it.
+
+   Unlayered on purpose: Tailwind's `transition-*` utilities and `.press` both
+   live in layers, and a layered rule cannot be overridden by a more specific
+   layered one. */
+main[data-transparent="true"] *,
+main[data-transparent="true"] *::before,
+main[data-transparent="true"] *::after {
+  transition: none;
+}
+
+/* ==========================================================================
+   Where the page background lives
+   ==========================================================================
+   Normally `body` paints it, and it fills the window because the window is the
+   viewport. Under client-side decorations that is exactly wrong: `body` covers
+   the gutter too, so the ambient field would paint over the very transparency
+   the shadow needs, and the window would go back to being an opaque rectangle
+   with a shadow drawn *inside* it.
+
+   So the background moves one box inwards, onto the shell. Unlayered on
+   purpose — `body`'s background is set in `@layer base`, and a layered rule
+   loses to an unlayered one no matter how specific it is. Same mechanism the
+   voice-bar rule above relies on. */
+:root[data-frame="csd"] body {
+  background: transparent;
+}
+:root[data-frame="csd"] .win-shell {
+  background-color: var(--ambient-base);
+  background-image: var(--ambient);
 }
 
 /* ==========================================================================

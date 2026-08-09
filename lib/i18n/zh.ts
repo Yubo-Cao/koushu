@@ -134,6 +134,14 @@ export const zh: Messages = {
   "settings.reload": "重新载入设置",
   "settings.saved": "设置已保存。",
 
+  // 分类栏。两个字一档，和右边的面板标题拉开层级；「服务」指的是云端转写和
+  // Markdown 整理这两个外部接口，不叫「云端」是因为本地 Ollama 也走这里。
+  "settings.nav": "设置分类",
+  "settings.tab.general": "通用",
+  "settings.tab.models": "模型",
+  "settings.tab.services": "服务",
+  "settings.tab.about": "关于",
+
   "settings.models.title": "模型",
 
   "settings.defaults.title": "默认设置",
@@ -170,6 +178,9 @@ export const zh: Messages = {
   "settings.storage.title": "存储",
   "settings.storage.retainAudio": "保留录音文件",
   "settings.storage.autoPaste": "悬浮条自动粘贴",
+  "settings.storage.liveInsert": "边说边输入",
+  "settings.storage.liveInsertHint":
+    "说完一句就送出一句，不再等整段说完一次性送出。更快，但更不准——短句的识别效果不如整段录音，而且字一旦进了别的程序就改不回来。",
   "settings.storage.save": "保存设置",
 
   "settings.trial.title": "试用",

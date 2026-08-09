@@ -54,7 +54,10 @@ export function Confetti({ fire, onDone }: { fire: boolean; onDone?: () => void 
   if (!active || reduced) return null;
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden" aria-hidden="true">
+    // Absolute, not fixed: the window shell is the visible window, and a fixed
+    // layer would spill confetti across the transparent gutter that carries the
+    // shadow — pieces falling *outside* the window read as a rendering fault.
+    <div className="pointer-events-none absolute inset-0 z-50 overflow-hidden" aria-hidden="true">
       {pieces.map((piece, i) => (
         <span
           key={i}
