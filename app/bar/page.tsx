@@ -76,9 +76,10 @@ export default function VoiceBar() {
     recordingRef.current = recording;
   }, [recording]);
 
-  // The pill's material defaults to a tint heavy enough to stay legible with
-  // no blur behind it. When the compositor *is* blurring, that tint stacks on
-  // top of the blur and reads as a dark slab, so the CSS switches profile.
+  // The pill is opaque — it has to be, see "Why the bar is not see-through" in
+  // globals.css — so compositor blur no longer shows through it. What the flag
+  // still buys is the edge treatment: against a blurred backdrop the label does
+  // not have to fight detail behind the bar, so the text shadow comes off.
   useEffect(() => {
     desktopBlurActive()
       .then((active) => {

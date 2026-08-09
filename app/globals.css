@@ -133,32 +133,30 @@
      Every knob for the floating bar lives here, so retuning it is a variable
      change rather than a redesign.
 
-     The blur behind this window is done by the compositor, not by CSS
-     (`ext_background_effect_manager_v1`, requested from Rust). That is why
-     there is no backdrop-filter on `.glass-pill`: the filter can only sample
-     page content, and this window has none — it would cost a compositing layer
-     and buy nothing. The desktop arrives already blurred, so the material's
-     job is only to tint it, and it should barely do that.
+     There is no backdrop-filter on `.glass-pill` and there never was: the
+     filter can only sample page content, and this window has none — the desktop
+     belongs to the compositor. Blur behind the window is requested from Rust
+     (`ext_background_effect_manager_v1`) and, now that the pill is opaque, has
+     nothing left to show through it; what it still buys is a calmer edge, which
+     is all the `data-desktop-blur` profile below now changes.
 
-     `--pill-tint`/`--pill-alpha` are the whole material. The default is tuned
-     for a *sharp* desktop, because compositor blur cannot be assumed: the
-     request can succeed while nothing honours it (KWin advertises the protocol
-     from core, but the effect that consumes it is the built-in Blur, which the
-     user may have disabled or replaced). Measured on this machine, a 2px line
-     behind the bar came through pixel-identical in width — tinted, not
-     blurred. So the material has to hold contrast on its own, and blur is an
-     improvement rather than a prerequisite.
+     `--pill-tint`/`--pill-alpha` are the whole material, and the alpha is 1.
+     That is a platform constraint rather than a taste call. See "Why the bar
+     is not see-through" at the bottom of this file: on a transparent
+     WebKitGTK surface every repainted pixel is blended
+     *over* the previous frame instead of replacing it, so any translucent
+     pixel that gets repainted walks its alpha up towards 1 and lands on this
+     colour anyway — just unevenly, and only where the meter and the transcript
+     happen to sit. Choosing the endpoint deliberately is the only way to make
+     the bar look the same in second one and second sixty.
 
-     When blur is confirmed working, set data-desktop-blur="true" on <html> and
-     the profile below drops the alpha so the blurred desktop supplies the
-     colour instead. */
-  --pill-tint: 232 14% 8%; /* near-neutral; the desktop supplies the colour */
-  /* 0.38 is where this stops being a tradeoff and starts being a balance,
-     measured against a desktop that is white on one side and near-black on the
-     other: below ~0.32 the text behind the bar reads straight through it and
-     competes with the transcript; above ~0.5 it stops transmitting and goes
-     back to looking like a painted chip. */
-  --pill-alpha: 0.38;
+     17% rather than the 8% the translucent version used: 8% at alpha 1 is
+     rgb(18,18,23), which is exactly the near-black slab the bug produced, and
+     shipping the artefact's colour as the design reads as the bug never having
+     been fixed. rgb(37,39,49) is a material — dark enough for white text over
+     a white wallpaper, light enough to read as an object rather than a hole. */
+  --pill-tint: 232 14% 17%;
+  --pill-alpha: 1;
   --pill-rim: var(--rim);
   --pill-glow: oklch(1 0 0 / 0.24);
   --pill-top: oklch(1 0 0 / 0.20);
@@ -401,16 +399,17 @@
 
 /* Frosted profile — only when the desktop behind the bar is genuinely blurred.
 
-   Worth switching on because blur does the legibility work that opacity is
-   doing by default, which lets the material get out of the way: a third of the
-   tint, no text shadow, colour coming from the blurred desktop rather than
-   from the fill. That is the difference between smoked glass and frosted
-   glass.
+   This used to drop `--pill-alpha` to 0.24 and let the blurred desktop supply
+   the colour. It cannot any more: a translucent pill on this surface does not
+   stay translucent (see the note at the bottom of the file), and blur behind a
+   surface that repaints itself opaque is invisible regardless. What survives is
+   the part that was never about transparency — with a blurred backdrop the text
+   no longer has to fight detail behind it, so the text shadow comes off and the
+   inner glow can carry a little more of the edge.
 
    Gate it on the effect being observed, not on the protocol request returning
    success — those are not the same thing. */
 :root[data-desktop-blur="true"] {
-  --pill-alpha: 0.24;
   --pill-glow: oklch(1 0 0 / 0.3);
   --pill-text-shadow: none;
 }
@@ -920,11 +919,14 @@
   /* The floating voice bar. Everything it looks like comes from the --pill-*
      variables above.
 
-     Deliberately no backdrop-filter: the compositor blurs the desktop behind
-     this window already, and CSS cannot see that backdrop anyway. Deliberately
-     no outer shadow: the window is cut to the pill's bounds and would slice it
-     off. The pill carries its own dark colour context because it floats over
-     unknown desktop content — smoked glass with light text reads on a bright
+     Deliberately no backdrop-filter: CSS can only sample page content and this
+     window has none, so it would cost a compositing layer and buy nothing.
+     Deliberately no outer shadow: the window is cut to the pill's bounds and
+     would slice it off — and a shadow is translucent, so it would be the one
+     part of this window still eligible for the accumulation described at the
+     bottom of this file. The pill carries its own dark colour because it floats
+     over
+     unknown desktop content: a dark capsule with light text reads on a bright
      wallpaper and a dark terminal alike, which no page-following palette does. */
   .glass-pill {
     position: relative;
@@ -1272,49 +1274,79 @@ body:has(main[data-transparent="true"]) {
 }
 
 /* ==========================================================================
-   No transitions inside the transparent window
+   Why the bar is not see-through
    ==========================================================================
 
-   This is a platform constraint, not a taste call, and it is the fix for the
-   voice bar looking like two stacked layers: a translucent capsule with an
-   opaque near-black slab sitting inside it.
+   On this WebKitGTK (2.52.5, Wayland, no DMA-BUF renderer) a repaint on a
+   transparent surface is composited *over* what the surface already held
+   instead of replacing it. Every repaint of a translucent pixel therefore
+   raises its alpha, and the region converges on its own tint at full opacity.
+   The bar looked like it was growing a black slab; it was really the same
+   0.38 tint, painted over itself a hundred times.
 
-   What was measured. On the pill, the 6px padding ring rendered at exactly the
-   intended alpha (rgb(160,162,166) over a white desktop = the 0.38 tint), while
-   the content box rendered at alpha **1.0** (rgb(17,17,23) = the same tint with
-   no transparency at all). Two translucent layers stacked would give
-   1 − (1 − 0.38)² ≈ 0.62, not 1.0, so nothing was stacking — something was
-   painting an opaque base.
+   Measured, on the real bar, over a 73-second recording sampled every 4.5s.
+   Effective alpha of the transcript strip:
 
-   What isolated it. Eight variants of the pill were rendered one at a time in
-   the real transparent window, each with one thing removed. The slab tracked
-   *transitions*, and nothing else:
+     t=13.9s  0.386   <- the designed value, one paint
+     t=18.5s  0.738
+     t=23.0s  0.879
+     t=27.4s  0.895
+     t=32.0s  0.950
+     ...      0.77-0.95
+     t=54.6s  0.386   <- reset, then it starts over
 
-     - it appeared under the waveform bars, whose box is exactly the slab's box;
-     - it appeared on the variant with no `.glass-pill` class at all, only an
-       inline translucent background — so it is not this stylesheet's material;
-     - it disappeared on the one variant whose children carried no `transition`
-       and no `.press`, with everything else identical.
+   1 − (1 − 0.38)^n for n = 1,2,3 is 0.380 / 0.616 / 0.762: the curve of a layer
+   composited over itself. The pill's 6px padding ring, which nothing ever
+   repaints, held 0.375 for the whole run. Repaint frequency is the whole story
+   — the 10 Hz meter saturated in about a second, the transcript took ten.
 
-   The mechanism is WebKitGTK promoting transition-bearing elements to
-   composited layers and backing those layers opaquely on a transparent surface.
-   The alpha channel of the layer is simply not preserved.
+   The corroborating symptom is ghosting: text removed from the DOM stays on
+   screen and only fades, because covering it means painting over it. A word
+   deleted from a lab row was still legible several seconds later.
 
-   So: inside this window, transitions are unavailable, and the honest thing is
-   to say so once here rather than to keep discovering it. The cost is small and
-   arguably an improvement — the waveform is driven by a real 10 Hz level
-   signal, and interpolating between true samples only adds latency to a meter
-   whose entire job is to be immediate. `:active` feedback still works; it just
-   lands on the press instead of easing into it.
+   What this is not, and what does not fix it, measured in a lab page rendered
+   inside this same transparent window:
 
-   Unlayered on purpose: Tailwind's `transition-*` utilities and `.press` both
-   live in layers, and a layered rule cannot be overridden by a more specific
-   layered one. */
-main[data-transparent="true"] *,
-main[data-transparent="true"] *::before,
-main[data-transparent="true"] *::after {
-  transition: none;
-}
+     - it is not transitions. An earlier commit disabled every `transition`
+       inside this window on the theory that WebKitGTK gives transition-bearing
+       compositing layers an opaque backing. The accumulation is still there
+       with them disabled — this file shipped that rule and the bar still went
+       black — so that bisect had caught a repaint-rate difference, not a cause.
+       They are allowed again, which gives the level meter its interpolation
+       back.
+     - it is not the partial repaint failing to clear. Damaging the whole
+       viewport every frame with a fully transparent paint drove the entire
+       window to alpha 1, including a row that had been stable at 0.38 for
+       thirty seconds. No repaint path clears.
+     - it is not something the compositor can be talked out of. Identical
+       results under WEBKIT_DISABLE_COMPOSITING_MODE, WEBKIT_FORCE_COMPOSITING_MODE,
+       WEBKIT_SKIA_ENABLE_CPU_RENDERING, WEBKIT_DMABUF_RENDERER_FORCE_SHM and
+       WEBKIT_DMABUF_RENDERER_DISABLE_GBM. The real DMA-BUF renderer still dies
+       with the Wayland protocol error `run()` documents, so that path is shut.
+     - it is not the layer surface. Bypassing gtk-layer-shell and running the
+       bar as an ordinary positioned window behaves the same.
+     - moving the animation onto the compositor does not avoid the damage. A
+       bar animated purely by a CSS keyframe on `transform`, on an element
+       carrying `will-change: transform`, still contributed to the damaged
+       region — the region's edge landed exactly on that element's box.
+
+   And the damaged region is one rectangle: WebKit unifies it to the bounding
+   box of everything that changed. That is what makes per-element treatments
+   hopeless here. The transcript has to change — it is the product — so the
+   pill's own background is inside the damaged rectangle no matter how the
+   meter beside it is implemented, whether that is a `<canvas>` with
+   `clearRect`, a promoted layer, or nothing at all.
+
+   That leaves exactly one invariant that holds: **a pixel that is opaque cannot
+   accumulate**, because `src OVER dst` with src alpha 1 is src. So everything
+   inside the damaged rectangle has to be opaque, and that rectangle spans the
+   pill. Hence `--pill-alpha: 1`.
+
+   Two consequences worth naming. The rounded corners and the 6px gutter stay
+   genuinely transparent, and stay correct, because nothing ever repaints there;
+   the window still needs `transparent: true`. And transitions are allowed again
+   — they were never the cause, and inside an opaque pill they composite over
+   opaque pixels — which gives the level meter its interpolation back. */
 
 /* ==========================================================================
    Where the page background lives
@@ -1349,7 +1381,7 @@ main[data-transparent="true"] *::after {
     --glass-raised-fill: oklch(0.995 0.002 264);
     --glass-chrome-tint: none;
     --glass-raised-tint: none;
-    --pill-alpha: 1;
+    /* the pill is opaque for everyone; only its effects come off here */
     --pill-text-shadow: none;
     --pill-glow: transparent;
     --deck-fill: oklch(0.965 0.004 264);
@@ -1381,7 +1413,6 @@ main[data-transparent="true"] *::after {
     --c-smoke: oklch(0.42 0.014 264);
     --glass-chrome-fill: oklch(1 0 0 / 0.94);
     --glass-raised-fill: oklch(1 0 0 / 0.96);
-    --pill-alpha: 0.88;
     --deck-fill: oklch(1 0 0 / 0.96);
     /* At high contrast the rim stops being a subtle highlight and becomes a
        real, evenly readable edge. */
