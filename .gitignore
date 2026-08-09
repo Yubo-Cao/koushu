@@ -14,3 +14,7 @@ openrouter
 *.key
 .env*
 !.env.example
+
+# Regenerate with scripts/gen-swift-bindings.sh — checking these in would
+# let them drift from the Rust they are generated from without anyone noticing.
+core/generated/

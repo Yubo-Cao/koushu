@@ -1,0 +1,27 @@
+[package]
+name = "fun-asr-core"
+version = "0.0.2"
+description = "Platform-neutral core for Fun ASR."
+authors = ["Fun ASR Desktop Contributors"]
+edition = "2021"
+
+[lib]
+name = "fun_asr_core"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[features]
+bindgen-cli = ["uniffi/cli"]
+
+[dependencies]
+base64.workspace = true
+ed25519-dalek.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uniffi.workspace = true
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen-cli"]

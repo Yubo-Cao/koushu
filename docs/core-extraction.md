@@ -100,14 +100,37 @@ UI then has to re-translate — twice.
 
 ## Order of work
 
-1. **Move storage first.** It is the most self-contained (schema, queries,
-   search) and has the most tests, so a mistake surfaces immediately.
-2. **Then the ASR runtime and streaming worker**, which is where the real
-   complexity is and where a stable interface matters most.
-3. **Then LLM, cloud ASR, licence, trial.** Small and independent.
+**Slice 1 — done.** Workspace, the `fun-asr-core` crate, and the three modules
+with no Tauri dependency at all: `license`, `asr_cloud`, `llm`. Plus the UniFFI
+scaffolding, with licence verification as the one thing crossing the boundary.
+
+The plan originally said storage first, on the grounds that it is the most
+self-contained and best-tested, so a mistake would surface immediately. It went
+this way instead because three agents were editing `lib.rs` concurrently and
+these three modules are separate files nobody was touching. That turned out to
+be the better first cut anyway: it exercises the *unfamiliar* machinery — a
+workspace, UniFFI, generated Swift — on code that is small and already tested,
+rather than proving the familiar part first.
+
+`src-tauri/src/lib.rs` moved by exactly 1 insertion and 3 deletions: three
+`mod` declarations became `pub use fun_asr_core::{asr_cloud, license, llm};`.
+The moved files kept their git blob hashes, so nothing was quietly rewritten.
+
+One consequence worth knowing about, because it broke a script and no test
+could have caught it: **a workspace moves cargo's output from
+`src-tauri/target` to the repository root `target/`.** Anything with that path
+written down has to move with it.
+
+Remaining:
+
+1. **Storage** — schema, queries, the FTS5 trigram index and its routing rule.
+   The most tests, so mistakes surface fast.
+2. **The ASR runtime and streaming worker**, where the real complexity is and
+   where a stable interface matters most.
+3. **Trial metering and settings.**
 4. **Leave `lib.rs` as a thin Tauri shim.** If it is not obviously thin at the
    end, the boundary was drawn in the wrong place.
-5. **Only then start SwiftUI**, against a core that already has a Swift package.
+5. **Then SwiftUI**, against a core that already has a Swift package.
 
 The Tauri app must keep working at every step. A refactor that requires a flag
 day is a refactor that gets abandoned halfway.

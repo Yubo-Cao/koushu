@@ -41,7 +41,7 @@ pub struct LicensePayload {
     pub version: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, uniffi::Record)]
 #[serde(rename_all = "camelCase")]
 pub struct LicenseInfo {
     pub valid: bool,
@@ -50,6 +50,21 @@ pub struct LicenseInfo {
     /// Why a licence was rejected, in words the user can act on.
     pub detail: String,
 }
+
+// A rejected licence deliberately does **not** cross the boundary as an error.
+//
+// `verify` never returns a `Result`, because "this licence is not valid" is an
+// answer, not a failure — and the answer carries text the user can act on. An
+// earlier version re-modelled that as a UniFFI error, which cost more than it
+// looked: UniFFI generates `errorDescription` as `String(reflecting: self)`, so
+// the idiomatic Swift call — putting `error.localizedDescription` in front of
+// the user — would have shown
+// `fun_asr_core.LicenseVerificationError.Rejected(detail: "…")` rather than the
+// sentence inside it. It also made `LicenseInfo.valid` a field that could only
+// ever be `true` on the Swift side.
+//
+// So the export below returns `LicenseInfo` directly. Callers read `valid` and
+// show `detail`, on every platform, with no translation layer to keep in sync.
 
 fn verifying_key() -> Option<VerifyingKey> {
     let bytes = (0..PUBLIC_KEY_HEX.len() / 2)
@@ -111,6 +126,16 @@ pub fn verify(license: &str) -> LicenseInfo {
         },
         Err(_) => reject("The licence contents could not be read."),
     }
+}
+
+/// Verify a licence from a native caller.
+///
+/// Thin on purpose: it is [`verify`] with an owned `String`, which is what the
+/// FFI can carry. Every decision stays in one place, so the Swift and Tauri
+/// shells cannot drift apart on what a rejected licence means.
+#[uniffi::export]
+pub fn verify_license(license: String) -> LicenseInfo {
+    verify(&license)
 }
 
 #[cfg(test)]

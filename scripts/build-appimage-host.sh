@@ -3,11 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_VERSION="$(grep -m1 '"version"' "${ROOT_DIR}/src-tauri/tauri.conf.json" | sed -E 's/.*"version": "([^"]+)".*/\1/')"
-APPIMAGE_DIR="${ROOT_DIR}/src-tauri/target/release/bundle/appimage"
+# Cargo writes to the workspace root since core/ was split out; this used to
+# be src-tauri/target and silently found nothing after the move.
+APPIMAGE_DIR="${ROOT_DIR}/target/release/bundle/appimage"
 APP_DIR="${APPIMAGE_DIR}/Fun ASR Desktop.AppDir"
 OUTPUT_NAME="Fun_ASR_Desktop-${APP_VERSION}-x86_64.AppImage"
 APPIMAGE_PLUGIN="${TAURI_LINUXDEPLOY_APPIMAGE_PLUGIN:-${HOME}/.cache/tauri/linuxdeploy-plugin-appimage.AppImage}"
-LOG_DIR="${ROOT_DIR}/target"
+# Not ${ROOT_DIR}/target itself: that is now cargo's output directory,
+# and build logs do not belong among build artefacts.
+LOG_DIR="${ROOT_DIR}/target/build-logs"
 LOG_FILE="${LOG_DIR}/host-appimage-build.log"
 
 cd "${ROOT_DIR}"
