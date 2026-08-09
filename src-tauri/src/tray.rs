@@ -276,7 +276,22 @@ fn on_menu_event(app: &AppHandle, id: &str) {
 }
 
 /// Poll the app's state and keep the icon and menu in step with it.
+///
+/// The polling runs on its own thread, but **every call that touches the tray
+/// or the menu is marshalled back onto the main thread**. On Linux those go
+/// through libappindicator and therefore through GTK, which is not thread-safe:
+/// calling in from here aborted the process whenever the main thread happened
+/// to be doing GTK work of its own. That made it look like three unrelated
+/// bugs — resizing a window, pressing the hotkey, and dictating into a terminal
+/// each "crashed the app" — when the only thing they had in common was being
+/// busy at the moment the watcher touched the icon.
+///
+/// Note this is why the handles live behind an `Arc`: the thread keeps one
+/// clone so the tray outlives `setup()` (a `TrayIcon` is reference counted and
+/// the icon vanishes with its last handle), and each main-thread closure needs
+/// its own.
 fn spawn_watcher(app: AppHandle, handles: TrayHandles, initial_locale: Locale) {
+    let handles = std::sync::Arc::new(handles);
     std::thread::spawn(move || {
         let mut shown_activity = Activity::Idle;
         let mut shown_locale = initial_locale;
@@ -288,23 +303,33 @@ fn spawn_watcher(app: AppHandle, handles: TrayHandles, initial_locale: Locale) {
             if activity == shown_activity && locale == shown_locale {
                 continue;
             }
+            let icon_changed = activity != shown_activity;
+            let locale_changed = locale != shown_locale;
+            shown_activity = activity;
+            shown_locale = locale;
 
-            if activity != shown_activity {
-                if let Err(err) = handles
-                    .tray
-                    .set_icon_with_as_template(Some(activity.icon()), activity.is_template())
-                {
-                    eprintln!("[tray] could not swap the icon: {err}");
+            let handles = handles.clone();
+            let result = app.run_on_main_thread(move || {
+                if icon_changed {
+                    if let Err(err) = handles
+                        .tray
+                        .set_icon_with_as_template(Some(activity.icon()), activity.is_template())
+                    {
+                        eprintln!("[tray] could not swap the icon: {err}");
+                    }
                 }
-                shown_activity = activity;
+                if locale_changed {
+                    let _ = handles.open.set_text(locale.open());
+                    let _ = handles.settings.set_text(locale.settings());
+                    let _ = handles.quit.set_text(locale.quit());
+                }
+                let _ = handles.status.set_text(locale.status(activity));
+            });
+            // The main thread is gone only when the app is shutting down, in
+            // which case so should this.
+            if result.is_err() {
+                return;
             }
-            if locale != shown_locale {
-                let _ = handles.open.set_text(locale.open());
-                let _ = handles.settings.set_text(locale.settings());
-                let _ = handles.quit.set_text(locale.quit());
-                shown_locale = locale;
-            }
-            let _ = handles.status.set_text(locale.status(activity));
         }
     });
 }
