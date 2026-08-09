@@ -153,18 +153,49 @@ fn current_locale(app: &AppHandle) -> Locale {
         Some("en") => return Locale::En,
         _ => {}
     }
-    // No stored choice yet — first run. Match the frontend's own rule: any
-    // Chinese tag is Chinese, everything else is English.
-    let env_lang = std::env::var("LC_ALL")
-        .or_else(|_| std::env::var("LC_MESSAGES"))
-        .or_else(|_| std::env::var("LANG"))
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if env_lang.starts_with("zh") {
+    // No stored choice yet — first run, so both sides have to guess, and they
+    // have to guess the same way or the tray ends up in English under a Chinese
+    // interface. The frontend reads `navigator.language`, which is the *system*
+    // language; matching that means asking the system, not the environment.
+    if system_language().starts_with("zh") {
         Locale::Zh
     } else {
         Locale::En
     }
+}
+
+/// The system's preferred language tag, lowercased.
+///
+/// Per platform, because the environment is not the answer everywhere. On Linux
+/// the locale variables are the system's own configuration. On macOS they are
+/// usually unset for a GUI app — an `.app` launched from Finder inherits almost
+/// nothing — so reading them there silently answered "English" on a Chinese Mac,
+/// which is exactly the mismatch this function exists to avoid.
+fn system_language() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        // `AppleLanguages` is an ordered preference list; the first entry is
+        // what the user actually reads the system in.
+        if let Ok(output) = std::process::Command::new("defaults")
+            .args(["read", "-g", "AppleLanguages"])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&output.stdout);
+            if let Some(first) = text
+                .lines()
+                .map(str::trim)
+                .find(|line| line.starts_with('"'))
+            {
+                return first.trim_matches(['"', ',', ' '].as_ref()).to_ascii_lowercase();
+            }
+        }
+    }
+
+    std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LC_MESSAGES"))
+        .or_else(|_| std::env::var("LANG"))
+        .unwrap_or_default()
+        .to_ascii_lowercase()
 }
 
 /// Everything the watcher thread needs to keep in step with the app.
