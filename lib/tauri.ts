@@ -16,6 +16,9 @@ import type {
   StreamingEvent,
   TrialStatus,
   SessionInfo,
+  SessionFilter,
+  SearchResponse,
+  FilterOptions,
   TranscriptInfo,
 } from "@/lib/types";
 
@@ -42,8 +45,43 @@ export async function listModels(): Promise<ModelInfo[]> {
   return invokeCommand<ModelInfo[]>("list_models");
 }
 
-export async function listSessions(limit = 60): Promise<SessionInfo[]> {
-  return invokeCommand<SessionInfo[]>("list_sessions", { limit });
+export async function listSessions(
+  limit = 60,
+  filter?: SessionFilter,
+): Promise<SessionInfo[]> {
+  return invokeCommand<SessionInfo[]>("list_sessions", { limit, filter });
+}
+
+/**
+ * Full-text search across every transcript, newest match first.
+ *
+ * Local SQLite over a trigram index, so this is a few milliseconds even on a
+ * large history — fast enough to run on every keystroke.
+ */
+export async function searchTranscripts(
+  query: string,
+  filter?: SessionFilter,
+  limit = 80,
+): Promise<SearchResponse> {
+  return invokeCommand<SearchResponse>("search_transcripts", {
+    request: { query, filter: filter ?? {}, limit },
+  });
+}
+
+/** Puts a session away, or brings it back. Nothing is deleted either way. */
+export async function setSessionArchived(
+  sessionId: string,
+  archived: boolean,
+): Promise<SessionInfo | null> {
+  return invokeCommand<SessionInfo | null>("set_session_archived", {
+    sessionId,
+    archived,
+  });
+}
+
+/** The languages, models and dates present, for populating the filters. */
+export async function sessionFilterOptions(): Promise<FilterOptions> {
+  return invokeCommand<FilterOptions>("session_filter_options");
 }
 
 export async function listTranscripts(sessionId: string): Promise<TranscriptInfo[]> {

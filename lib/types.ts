@@ -30,6 +30,63 @@ export type SessionInfo = {
   model: string;
   language: string;
   runtime: string;
+  /** When the session was put away. Archiving hides; it never deletes. */
+  archived_at?: string | null;
+};
+
+/** Which side of the archive line to show. */
+export type ArchiveScope = "active" | "archived" | "all";
+
+/**
+ * Narrowing shared by the session list and by search. Every field is optional,
+ * and an empty string means "no constraint" — which is what a select box set
+ * back to its "Any" option hands over.
+ */
+export type SessionFilter = {
+  language?: string;
+  model?: string;
+  /** Inclusive `YYYY-MM-DD` bounds. */
+  from?: string;
+  to?: string;
+  archived?: ArchiveScope;
+};
+
+export type SearchHit = {
+  transcriptId: string;
+  sessionId: string;
+  sessionTitle: string;
+  dateKey: string;
+  createdAt: string;
+  language: string;
+  model: string;
+  archived: boolean;
+  /** A window of the transcript around the first match, elided with `…`. */
+  snippet: string;
+};
+
+/**
+ * `substring` means a term was shorter than the three characters the trigram
+ * index needs, so the query was answered by scanning instead. The distinction
+ * matters for explaining an empty result, not for how hits are displayed.
+ */
+export type SearchMode = "empty" | "fts" | "substring";
+
+export type SearchResponse = {
+  /** The terms actually searched for, for highlighting inside each snippet. */
+  terms: string[];
+  hits: SearchHit[];
+  /** More matched than the limit; these are the most recent. */
+  truncated: boolean;
+  mode: SearchMode;
+};
+
+/** The languages, models and dates that actually occur in the database. */
+export type FilterOptions = {
+  languages: string[];
+  models: string[];
+  earliestDate?: string | null;
+  latestDate?: string | null;
+  archivedCount: number;
 };
 
 export type TranscriptInfo = {

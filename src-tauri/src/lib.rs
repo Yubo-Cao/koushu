@@ -25,7 +25,7 @@ use base64::{engine::general_purpose, Engine as _};
 use chrono::Local;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use reqwest::header::{CONTENT_LENGTH, RANGE};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, types::Value, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -263,6 +263,152 @@ struct SessionInfo {
     model: String,
     language: String,
     runtime: String,
+    /// When the user put this session away. `None` means it is still in the
+    /// main list. Archiving never deletes anything.
+    archived_at: Option<String>,
+}
+
+/// Which side of the archive line to look at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ArchiveScope {
+    /// Everything the user has not put away. The default view.
+    #[default]
+    Active,
+    Archived,
+    All,
+}
+
+impl ArchiveScope {
+    /// SQL predicate over `sessions`, aliased as `s`.
+    fn predicate(self) -> Option<&'static str> {
+        match self {
+            ArchiveScope::Active => Some("s.archived_at IS NULL"),
+            ArchiveScope::Archived => Some("s.archived_at IS NOT NULL"),
+            ArchiveScope::All => None,
+        }
+    }
+}
+
+/// Narrowing shared by the session list and by search.
+///
+/// Every field is optional and an absent field means "do not narrow on this",
+/// so the default value is the unfiltered view.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct SessionFilter {
+    language: Option<String>,
+    model: Option<String>,
+    /// Inclusive `date_key` bounds, `YYYY-MM-DD`. That format sorts
+    /// lexicographically, so plain string comparison is a date comparison.
+    from: Option<String>,
+    to: Option<String>,
+    archived: ArchiveScope,
+}
+
+impl SessionFilter {
+    /// Non-empty, trimmed value or `None` — an empty select box is not a filter.
+    fn cleaned(value: &Option<String>) -> Option<&str> {
+        value.as_deref().map(str::trim).filter(|v| !v.is_empty())
+    }
+
+    /// Appends `AND …` clauses for whichever fields are set, pushing their bound
+    /// values onto `binds` in the same order.
+    ///
+    /// `language_col` and `model_col` are qualified column names so search can
+    /// filter on the transcript's own language while the session list filters
+    /// on the session's.
+    fn push_sql(
+        &self,
+        language_col: &str,
+        model_col: &str,
+        sql: &mut String,
+        binds: &mut Vec<Value>,
+    ) {
+        if let Some(language) = Self::cleaned(&self.language) {
+            sql.push_str(&format!(" AND {language_col} = ?"));
+            binds.push(Value::Text(language.to_string()));
+        }
+        if let Some(model) = Self::cleaned(&self.model) {
+            sql.push_str(&format!(" AND {model_col} = ?"));
+            binds.push(Value::Text(model.to_string()));
+        }
+        if let Some(from) = Self::cleaned(&self.from) {
+            sql.push_str(" AND s.date_key >= ?");
+            binds.push(Value::Text(from.to_string()));
+        }
+        if let Some(to) = Self::cleaned(&self.to) {
+            sql.push_str(" AND s.date_key <= ?");
+            binds.push(Value::Text(to.to_string()));
+        }
+        if let Some(predicate) = self.archived.predicate() {
+            sql.push_str(" AND ");
+            sql.push_str(predicate);
+        }
+    }
+}
+
+/// One transcript that matched a search, with enough session context to show
+/// and open it without a second round trip.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchHit {
+    transcript_id: String,
+    session_id: String,
+    session_title: String,
+    date_key: String,
+    created_at: String,
+    language: String,
+    model: String,
+    archived: bool,
+    /// A window of the transcript around the first match, elided with `…`.
+    snippet: String,
+}
+
+/// How the query was answered. Shown nowhere, but it makes the difference
+/// between "no matches" and "your query was too short to index" testable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum SearchMode {
+    /// Nothing to search for.
+    Empty,
+    /// Trigram index.
+    Fts,
+    /// A term shorter than a trigram, matched by scanning.
+    Substring,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchResponse {
+    /// The whitespace-separated terms actually searched for, so the UI can
+    /// highlight them in each snippet without re-deriving the split.
+    terms: Vec<String>,
+    hits: Vec<SearchHit>,
+    /// More matched than `limit`; what came back is the most recent slice.
+    truncated: bool,
+    mode: SearchMode,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchRequest {
+    query: String,
+    #[serde(default)]
+    filter: SessionFilter,
+    limit: Option<i64>,
+}
+
+/// The values that actually occur, so the filter controls can offer real
+/// choices instead of a hardcoded list the database may not contain.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FilterOptions {
+    languages: Vec<String>,
+    models: Vec<String>,
+    earliest_date: Option<String>,
+    latest_date: Option<String>,
+    archived_count: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -1313,7 +1459,7 @@ fn get_bootstrap(state: tauri::State<'_, AppState>) -> Result<Bootstrap, String>
         settings: load_settings_json(&state)?,
         platform: platform_info(&state),
         models: list_models_inner(&state)?,
-        sessions: list_sessions_inner(&state, 60)?,
+        sessions: list_sessions_inner(&state, 60, &SessionFilter::default())?,
     })
 }
 
@@ -1336,8 +1482,38 @@ fn list_models(state: tauri::State<'_, AppState>) -> Result<Vec<ModelInfo>, Stri
 fn list_sessions(
     state: tauri::State<'_, AppState>,
     limit: Option<i64>,
+    filter: Option<SessionFilter>,
 ) -> Result<Vec<SessionInfo>, String> {
-    list_sessions_inner(&state, limit.unwrap_or(60))
+    list_sessions_inner(&state, limit.unwrap_or(60), &filter.unwrap_or_default())
+}
+
+/// Full-text search across every transcript, newest match first.
+#[tauri::command]
+fn search_transcripts(
+    state: tauri::State<'_, AppState>,
+    request: SearchRequest,
+) -> Result<SearchResponse, String> {
+    search_transcripts_inner(
+        &state,
+        &request.query,
+        &request.filter,
+        request.limit.unwrap_or(80),
+    )
+}
+
+/// Puts a session away, or brings it back. Never deletes.
+#[tauri::command]
+fn set_session_archived(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+    archived: bool,
+) -> Result<Option<SessionInfo>, String> {
+    set_session_archived_inner(&state, &session_id, archived)
+}
+
+#[tauri::command]
+fn session_filter_options(state: tauri::State<'_, AppState>) -> Result<FilterOptions, String> {
+    filter_options_inner(&state)
 }
 
 #[tauri::command]
@@ -2470,6 +2646,9 @@ pub fn run() {
             list_models,
             list_sessions,
             list_transcripts,
+            search_transcripts,
+            set_session_archived,
+            session_filter_options,
             create_session,
             set_setting,
             download_model_with_progress,
@@ -2499,6 +2678,17 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(db_path)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
+    apply_schema(&conn)?;
+    seed_db(&conn, app_dir)?;
+    Ok(conn)
+}
+
+/// Every table, index, trigger and migration, in the order they must run.
+///
+/// Split out from `init_db` so tests can build the real schema in memory
+/// instead of approximating it — a search test against a hand-written FTS table
+/// would prove nothing about the one that ships.
+fn apply_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS settings (
@@ -2556,10 +2746,20 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
             FOREIGN KEY(transcript_id) REFERENCES transcripts(id) ON DELETE CASCADE
         );
 
+        -- tokenize='trigram', not the default unicode61.
+        --
+        -- unicode61 splits on spaces and punctuation, which is meaningless for
+        -- Chinese: 「今天所做的这一个渲染」 is one enormous token, so searching
+        -- 「渲染」 matches nothing at all. The trigram tokenizer indexes every
+        -- overlapping run of three characters instead, which makes MATCH a true
+        -- substring search and works for CJK, Latin and mixed text alike. The
+        -- cost is a larger index and a three-character floor on queries —
+        -- shorter ones fall back to LIKE in `search_transcripts_inner`.
         CREATE VIRTUAL TABLE IF NOT EXISTS transcripts_fts USING fts5(
             text,
             content='transcripts',
-            content_rowid='rowid'
+            content_rowid='rowid',
+            tokenize='trigram'
         );
 
         CREATE TRIGGER IF NOT EXISTS transcripts_ai AFTER INSERT ON transcripts BEGIN
@@ -2579,20 +2779,6 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
         "#,
     )?;
 
-    // Drop sessions that never captured anything.
-    //
-    // A session is created the moment recording starts, so any push-to-talk
-    // that picked up no speech — a mis-hit, a false trigger, a moment of
-    // silence — leaves an empty row behind. They accumulate quickly and make
-    // the sidebar useless. Only sessions older than an hour are removed, so a
-    // session being recorded into right now is never touched.
-    conn.execute(
-        "DELETE FROM sessions
-          WHERE NOT EXISTS (SELECT 1 FROM transcripts t WHERE t.session_id = sessions.id)
-            AND started_at < datetime('now', '-1 hour')",
-        [],
-    )?;
-
     // Two-layer transcripts: raw ASR text plus an optional LLM-formatted
     // version. Added after the initial schema, so applied as a migration.
     for (column, decl) in [
@@ -2610,6 +2796,69 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
             )?;
         }
     }
+
+    // Archiving. A timestamp rather than a boolean, because "when did I put
+    // this away" is worth keeping and costs nothing over a flag.
+    let archived_exists: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")?
+        .exists(params!["archived_at"])?;
+    if !archived_exists {
+        conn.execute("ALTER TABLE sessions ADD COLUMN archived_at TEXT", [])?;
+    }
+
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_archived_started
+             ON sessions(archived_at, started_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_transcripts_session
+             ON transcripts(session_id, created_at);",
+    )?;
+
+    // Re-tokenize an index built before trigram.
+    //
+    // `CREATE VIRTUAL TABLE IF NOT EXISTS` above is a no-op on databases that
+    // already have the unicode61 index, and those cannot match Chinese at all.
+    // The FTS content lives entirely in `transcripts`, so dropping and
+    // rebuilding loses nothing — it is a derived index, not data.
+    let fts_sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transcripts_fts'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if fts_sql.is_some_and(|sql| !sql.contains("trigram")) {
+        conn.execute_batch(
+            r#"
+            DROP TABLE IF EXISTS transcripts_fts;
+            CREATE VIRTUAL TABLE transcripts_fts USING fts5(
+                text,
+                content='transcripts',
+                content_rowid='rowid',
+                tokenize='trigram'
+            );
+            INSERT INTO transcripts_fts(transcripts_fts) VALUES('rebuild');
+            "#,
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Startup housekeeping and the built-in model catalog.
+fn seed_db(conn: &Connection, app_dir: &Path) -> rusqlite::Result<()> {
+    // Drop sessions that never captured anything.
+    //
+    // A session is created the moment recording starts, so any push-to-talk
+    // that picked up no speech — a mis-hit, a false trigger, a moment of
+    // silence — leaves an empty row behind. They accumulate quickly and make
+    // the sidebar useless. Only sessions older than an hour are removed, so a
+    // session being recorded into right now is never touched.
+    conn.execute(
+        "DELETE FROM sessions
+          WHERE NOT EXISTS (SELECT 1 FROM transcripts t WHERE t.session_id = sessions.id)
+            AND started_at < datetime('now', '-1 hour')",
+        [],
+    )?;
 
     // Both models run on the official llama.cpp CPU runtime. `local_path` is a
     // directory now, not a single file, because each model is several GGUFs.
@@ -2709,7 +2958,7 @@ fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
         [],
     )?;
 
-    Ok(conn)
+    Ok(())
 }
 
 fn load_settings_json(state: &AppState) -> Result<serde_json::Value, String> {
@@ -2900,6 +3149,7 @@ fn create_session_inner(
         model: model.to_string(),
         language: language.to_string(),
         runtime: runtime.to_string(),
+        archived_at: None,
     };
 
     let conn = state
@@ -2927,23 +3177,36 @@ fn create_session_inner(
     Ok(session)
 }
 
-fn list_sessions_inner(state: &AppState, limit: i64) -> Result<Vec<SessionInfo>, String> {
+const SESSION_COLUMNS: &str =
+    "s.id, s.title, s.started_at, s.ended_at, s.date_key, s.model, s.language, s.runtime, s.archived_at";
+
+fn list_sessions_inner(
+    state: &AppState,
+    limit: i64,
+    filter: &SessionFilter,
+) -> Result<Vec<SessionInfo>, String> {
     let conn = state
         .db
         .lock()
         .map_err(|_| "Database lock poisoned".to_string())?;
-    let mut stmt = conn
-        .prepare(
-            r#"
-            SELECT id, title, started_at, ended_at, date_key, model, language, runtime
-            FROM sessions
-            ORDER BY started_at DESC
-            LIMIT ?1
-            "#,
-        )
-        .map_err(|err| err.to_string())?;
+    list_sessions_on(&conn, limit, filter)
+}
+
+fn list_sessions_on(
+    conn: &Connection,
+    limit: i64,
+    filter: &SessionFilter,
+) -> Result<Vec<SessionInfo>, String> {
+    // `WHERE 1 = 1` so every clause below can be appended uniformly as `AND …`.
+    let mut sql = format!("SELECT {SESSION_COLUMNS} FROM sessions s WHERE 1 = 1");
+    let mut binds: Vec<Value> = Vec::new();
+    filter.push_sql("s.language", "s.model", &mut sql, &mut binds);
+    sql.push_str(" ORDER BY s.started_at DESC LIMIT ?");
+    binds.push(Value::Integer(limit));
+
+    let mut stmt = conn.prepare(&sql).map_err(|err| err.to_string())?;
     let rows = stmt
-        .query_map(params![limit], map_session)
+        .query_map(rusqlite::params_from_iter(binds), map_session)
         .map_err(|err| err.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| err.to_string())?;
@@ -2960,7 +3223,910 @@ fn map_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionInfo> {
         model: row.get(5)?,
         language: row.get(6)?,
         runtime: row.get(7)?,
+        archived_at: row.get(8)?,
     })
+}
+
+/// Moves a session in or out of the archive.
+///
+/// Nothing is deleted and nothing is copied: only `archived_at` changes, so the
+/// transcripts, the FTS index and every id stay exactly as they were. Returns
+/// the session in its new state, or `None` if the id is unknown.
+fn set_session_archived_inner(
+    state: &AppState,
+    session_id: &str,
+    archived: bool,
+) -> Result<Option<SessionInfo>, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| "Database lock poisoned".to_string())?;
+    set_session_archived_on(&conn, session_id, archived)
+}
+
+fn set_session_archived_on(
+    conn: &Connection,
+    session_id: &str,
+    archived: bool,
+) -> Result<Option<SessionInfo>, String> {
+    let stamp = archived.then(|| Local::now().to_rfc3339());
+    conn.execute(
+        "UPDATE sessions SET archived_at = ?1 WHERE id = ?2",
+        params![stamp, session_id],
+    )
+    .map_err(|err| err.to_string())?;
+
+    conn.query_row(
+        &format!("SELECT {SESSION_COLUMNS} FROM sessions s WHERE s.id = ?1"),
+        params![session_id],
+        map_session,
+    )
+    .optional()
+    .map_err(|err| err.to_string())
+}
+
+fn filter_options_inner(state: &AppState) -> Result<FilterOptions, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| "Database lock poisoned".to_string())?;
+    filter_options_on(&conn)
+}
+
+fn filter_options_on(conn: &Connection) -> Result<FilterOptions, String> {
+    let collect = |sql: &str| -> Result<Vec<String>, String> {
+        let mut stmt = conn.prepare(sql).map_err(|err| err.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|err| err.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| err.to_string())?;
+        Ok(rows)
+    };
+
+    let languages =
+        collect("SELECT DISTINCT language FROM sessions WHERE language <> '' ORDER BY language")?;
+    let models = collect("SELECT DISTINCT model FROM sessions WHERE model <> '' ORDER BY model")?;
+    let (earliest_date, latest_date) = conn
+        .query_row(
+            "SELECT MIN(date_key), MAX(date_key) FROM sessions",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
+        )
+        .map_err(|err| err.to_string())?;
+    let archived_count = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE archived_at IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| err.to_string())?;
+
+    Ok(FilterOptions {
+        languages,
+        models,
+        earliest_date,
+        latest_date,
+        archived_count,
+    })
+}
+
+/// Splits a raw query box into search terms.
+///
+/// Whitespace-separated, because that is what every search box in the world
+/// does. Quoted phrases are deliberately not supported: with a trigram index
+/// every term is already a literal substring, so `"液态 玻璃"` and `液态 玻璃`
+/// would only differ in whether the space itself has to match.
+fn search_terms(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .filter(|term| !term.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Wraps each term as an FTS5 string literal and ANDs them together.
+///
+/// Every term becomes a `"…"` phrase so that punctuation and CJK inside it are
+/// matched literally rather than parsed as FTS5 operator syntax; an embedded
+/// double quote is escaped by doubling, as SQL requires.
+fn fts_match_expression(terms: &[String]) -> String {
+    terms
+        .iter()
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Escapes a term for use inside `LIKE '%' || ? || '%' ESCAPE '\'`.
+fn like_pattern(term: &str) -> String {
+    let mut escaped = String::with_capacity(term.len() + 2);
+    escaped.push('%');
+    for ch in term.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped.push('%');
+    escaped
+}
+
+/// The trigram tokenizer cannot answer a query shorter than one trigram.
+const MIN_TRIGRAM_CHARS: usize = 3;
+
+/// A window of `text` around the first term that occurs in it.
+///
+/// Counted in `char`s, never bytes: a byte window would give a Chinese snippet
+/// a third the content of an English one and could split a character in half.
+fn build_snippet(text: &str, terms: &[String], window: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= window {
+        return text.trim().to_string();
+    }
+
+    // Case-insensitive search on a lowered copy, indexed by char position so
+    // the offset maps straight back onto `chars`.
+    let lowered: Vec<char> = chars.iter().flat_map(|ch| ch.to_lowercase()).collect();
+    let hit = terms.iter().find_map(|term| {
+        let needle: Vec<char> = term.chars().flat_map(|ch| ch.to_lowercase()).collect();
+        if needle.is_empty() || needle.len() > lowered.len() {
+            return None;
+        }
+        (0..=lowered.len() - needle.len())
+            .find(|&start| lowered[start..start + needle.len()] == needle[..])
+    });
+
+    // `to_lowercase` can change a string's length (ß, İ), which would shift the
+    // offset. Clamping keeps the window inside the text either way; the worst
+    // case is a snippet centred a character or two off.
+    let hit = hit.unwrap_or(0).min(chars.len().saturating_sub(1));
+    let lead = window / 3;
+    let start = hit.saturating_sub(lead);
+    let end = (start + window).min(chars.len());
+    let start = end.saturating_sub(window);
+
+    let mut snippet = String::new();
+    if start > 0 {
+        snippet.push('…');
+    }
+    snippet.extend(&chars[start..end]);
+    if end < chars.len() {
+        snippet.push('…');
+    }
+    snippet
+}
+
+const SNIPPET_CHARS: usize = 110;
+
+fn search_transcripts_inner(
+    state: &AppState,
+    query: &str,
+    filter: &SessionFilter,
+    limit: i64,
+) -> Result<SearchResponse, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| "Database lock poisoned".to_string())?;
+    search_transcripts_on(&conn, query, filter, limit)
+}
+
+fn search_transcripts_on(
+    conn: &Connection,
+    query: &str,
+    filter: &SessionFilter,
+    limit: i64,
+) -> Result<SearchResponse, String> {
+    let terms = search_terms(query);
+    if terms.is_empty() {
+        return Ok(SearchResponse {
+            terms,
+            hits: Vec::new(),
+            truncated: false,
+            mode: SearchMode::Empty,
+        });
+    }
+
+    // The trigram index answers anything three characters or longer. A shorter
+    // term — 「的」, `UI` — has no trigram to look up, so those queries scan
+    // instead. Mixing the two would need an intersection across two indexes for
+    // no real gain, so a single short term puts the whole query on the scan.
+    let use_fts = terms
+        .iter()
+        .all(|term| term.chars().count() >= MIN_TRIGRAM_CHARS);
+
+    let mut binds: Vec<Value> = Vec::new();
+    let mut sql = String::from(
+        "SELECT t.id, t.session_id, t.text, t.created_at, t.language, t.model,
+                s.title, s.date_key, s.archived_at
+         FROM transcripts t
+         JOIN sessions s ON s.id = t.session_id
+         WHERE ",
+    );
+
+    if use_fts {
+        sql.push_str(
+            "t.rowid IN (SELECT rowid FROM transcripts_fts WHERE transcripts_fts MATCH ?)",
+        );
+        binds.push(Value::Text(fts_match_expression(&terms)));
+    } else {
+        // All terms must appear, matching the AND semantics of the FTS path.
+        for (index, term) in terms.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(" AND ");
+            }
+            sql.push_str("t.text LIKE ? ESCAPE '\\'");
+            binds.push(Value::Text(like_pattern(term)));
+        }
+    }
+
+    // Filter on the transcript's own language and model: the row on screen is a
+    // transcript, so it should be judged by what actually produced it, not by
+    // what the session was set to when it was opened.
+    filter.push_sql("t.language", "t.model", &mut sql, &mut binds);
+
+    // One row over the limit, purely to tell "exactly full" from "there is more".
+    sql.push_str(" ORDER BY t.created_at DESC LIMIT ?");
+    binds.push(Value::Integer(limit.max(1) + 1));
+
+    let mut stmt = conn.prepare(&sql).map_err(|err| err.to_string())?;
+    let mut hits = stmt
+        .query_map(rusqlite::params_from_iter(binds), |row| {
+            let text: String = row.get(2)?;
+            let archived: Option<String> = row.get(8)?;
+            Ok(SearchHit {
+                transcript_id: row.get(0)?,
+                session_id: row.get(1)?,
+                snippet: build_snippet(&text, &terms, SNIPPET_CHARS),
+                created_at: row.get(3)?,
+                language: row.get(4)?,
+                model: row.get(5)?,
+                session_title: row.get(6)?,
+                date_key: row.get(7)?,
+                archived: archived.is_some(),
+            })
+        })
+        .map_err(|err| err.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.to_string())?;
+
+    let truncated = hits.len() as i64 > limit.max(1);
+    hits.truncate(limit.max(1) as usize);
+
+    Ok(SearchResponse {
+        terms,
+        hits,
+        truncated,
+        mode: if use_fts {
+            SearchMode::Fts
+        } else {
+            SearchMode::Substring
+        },
+    })
+}
+
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    /// Verbatim transcripts from a real session, kept as-is on purpose.
+    ///
+    /// The whole point of the trigram tokenizer is that unsegmented Mandarin
+    /// works, and paraphrased or space-separated fixtures would quietly pass
+    /// under the default tokenizer too — proving nothing.
+    const ZH_GLASS: &str = "麻烦你去给这个正在改液态玻璃页面的A正的提点意见吧。他现在做这个玩意儿呢，感觉和液态玻璃关系不大。";
+    const ZH_UI: &str = "目前的话呢，它拖动的话好像还是不是很跟手。希望你能够把这个东西的UI重新设置做成类似于iOS 27这种液态玻璃的质感。";
+    const ZH_MATERIAL: &str =
+        "今天所做的这一个 MATERIAL 的这个 BLEND RENDER，我可以希望你把它做得更好看一些。";
+    const EN_ALPHA: &str =
+        "Approve the architectural work on the alpha plane and alpha compositing.";
+
+    fn memory_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("open in-memory database");
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        apply_schema(&conn).expect("apply the shipping schema");
+        conn
+    }
+
+    fn add_session(conn: &Connection, id: &str, date_key: &str, language: &str, model: &str) {
+        conn.execute(
+            "INSERT INTO sessions
+             (id, title, started_at, ended_at, date_key, model, language, runtime, archived_at)
+             VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, 'test', NULL)",
+            params![
+                id,
+                format!("Session {id}"),
+                format!("{date_key}T09:00:00Z"),
+                date_key,
+                model,
+                language
+            ],
+        )
+        .unwrap();
+    }
+
+    fn add_transcript(conn: &Connection, id: &str, session_id: &str, text: &str) {
+        let (language, model): (String, String) = conn
+            .query_row(
+                "SELECT language, model FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO transcripts
+             (id, session_id, text, status, source, created_at, duration_ms, model, language)
+             VALUES (?1, ?2, ?3, 'final', 'mic', ?4, NULL, ?5, ?6)",
+            params![
+                id,
+                session_id,
+                text,
+                format!("2026-08-08T12:{id:0>2}:00Z"),
+                model,
+                language
+            ],
+        )
+        .unwrap();
+    }
+
+    /// A corpus that mixes Mandarin, English and dates, like the real database.
+    fn corpus() -> Connection {
+        let conn = memory_db();
+        add_session(&conn, "1", "2026-08-01", "中文", "fun-asr-nano-2512");
+        add_session(&conn, "2", "2026-08-05", "中文", "sensevoice-small");
+        add_session(&conn, "3", "2026-08-08", "English", "fun-asr-nano-2512");
+        add_transcript(&conn, "11", "1", ZH_GLASS);
+        add_transcript(&conn, "22", "2", ZH_UI);
+        add_transcript(&conn, "33", "2", ZH_MATERIAL);
+        add_transcript(&conn, "44", "3", EN_ALPHA);
+        conn
+    }
+
+    fn search(conn: &Connection, query: &str) -> SearchResponse {
+        search_transcripts_on(conn, query, &SessionFilter::default(), 50).unwrap()
+    }
+
+    fn ids(response: &SearchResponse) -> Vec<String> {
+        response
+            .hits
+            .iter()
+            .map(|hit| hit.transcript_id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn the_default_tokenizer_cannot_find_chinese() {
+        // The failure this whole design exists to avoid. If this test ever
+        // starts passing, FTS5 gained a CJK-aware default and the trigram
+        // index — and its three-character floor — could be reconsidered.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE plain USING fts5(text);
+             INSERT INTO plain(text) VALUES ('麻烦你去给这个正在改液态玻璃页面的意见吧');",
+        )
+        .unwrap();
+        let hits: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM plain WHERE plain MATCH '\"液态玻璃\"'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            hits, 0,
+            "unicode61 indexes an unsegmented sentence as one token"
+        );
+    }
+
+    #[test]
+    fn finds_chinese_mid_sentence() {
+        let conn = corpus();
+        // 液态玻璃 sits in the middle of both sentences, with no delimiter of
+        // any kind on either side.
+        let response = search(&conn, "液态玻璃");
+        assert_eq!(response.mode, SearchMode::Fts);
+        assert_eq!(ids(&response), vec!["22", "11"], "newest match first");
+        assert!(response.hits[0].snippet.contains("液态玻璃"));
+    }
+
+    #[test]
+    fn finds_a_three_character_chinese_fragment() {
+        let conn = corpus();
+        assert_eq!(ids(&search(&conn, "玩意儿")), vec!["11"]);
+        assert_eq!(ids(&search(&conn, "重新设置")), vec!["22"]);
+    }
+
+    #[test]
+    fn all_terms_must_match() {
+        let conn = corpus();
+        // Both fragments are in transcript 22 only; 11 has 液态玻璃 but no 拖动.
+        assert_eq!(ids(&search(&conn, "液态玻璃 拖动")), vec!["22"]);
+        assert!(search(&conn, "液态玻璃 火星探测").hits.is_empty());
+    }
+
+    #[test]
+    fn matches_latin_without_regard_to_case() {
+        let conn = corpus();
+        assert_eq!(ids(&search(&conn, "material")), vec!["33"]);
+        assert_eq!(ids(&search(&conn, "MATERIAL")), vec!["33"]);
+        assert_eq!(ids(&search(&conn, "architectural")), vec!["44"]);
+    }
+
+    #[test]
+    fn short_queries_fall_back_to_scanning() {
+        let conn = corpus();
+        // "UI" is two characters, so it has no trigram to look up. The FTS
+        // index would silently return nothing; the scan finds it.
+        let response = search(&conn, "UI");
+        assert_eq!(response.mode, SearchMode::Substring);
+        assert_eq!(ids(&response), vec!["22"]);
+
+        let single = search(&conn, "拖");
+        assert_eq!(single.mode, SearchMode::Substring);
+        assert_eq!(ids(&single), vec!["22"]);
+    }
+
+    #[test]
+    fn a_mixed_length_query_uses_the_scan_for_every_term() {
+        let conn = corpus();
+        // 液态玻璃 is indexable, UI is not; taking the FTS path would drop the
+        // UI half of the query and over-match.
+        let response = search(&conn, "液态玻璃 UI");
+        assert_eq!(response.mode, SearchMode::Substring);
+        assert_eq!(ids(&response), vec!["22"]);
+    }
+
+    #[test]
+    fn an_empty_query_matches_nothing_rather_than_everything() {
+        let conn = corpus();
+        for query in ["", "   ", "\t\n"] {
+            let response = search(&conn, query);
+            assert_eq!(response.mode, SearchMode::Empty);
+            assert!(response.hits.is_empty(), "{query:?} should return no hits");
+        }
+    }
+
+    #[test]
+    fn fts_operators_in_the_query_are_matched_literally() {
+        let conn = corpus();
+        add_session(&conn, "9", "2026-08-08", "English", "fun-asr-nano-2512");
+        add_transcript(
+            &conn,
+            "99",
+            "9",
+            r#"He said "hello there" and 100% meant it."#,
+        );
+
+        // Quotes, `*`, `NEAR` and `^` are all FTS5 syntax. Typed into a search
+        // box they are just characters, and must not be parsed — a stray quote
+        // used to be enough to turn a search into a SQL error.
+        assert_eq!(ids(&search(&conn, r#""hello there""#)), vec!["99"]);
+        assert_eq!(ids(&search(&conn, "100%")), vec!["99"]);
+        for hostile in [r#"""#, "*", "NEAR(", "^foo", "AND", ")))"] {
+            search(&conn, hostile);
+        }
+    }
+
+    #[test]
+    fn like_wildcards_in_short_queries_are_matched_literally() {
+        let conn = corpus();
+        add_session(&conn, "9", "2026-08-08", "English", "fun-asr-nano-2512");
+        add_transcript(&conn, "99", "9", "it_really cost 50% more");
+        add_transcript(&conn, "98", "9", "architecture rendered 507 frames");
+
+        // Two characters, so these take the scan. An unescaped `_` is LIKE's
+        // any-single-character wildcard and would also match "re" in
+        // "rendered"; an unescaped `%` would match everything with a 0 in it.
+        assert_eq!(ids(&search(&conn, "_r")), vec!["99"]);
+        assert_eq!(ids(&search(&conn, "0%")), vec!["99"]);
+    }
+
+    #[test]
+    fn hits_carry_their_session() {
+        let conn = corpus();
+        let hit = &search(&conn, "液态玻璃").hits[0];
+        assert_eq!(hit.session_id, "2");
+        assert_eq!(hit.session_title, "Session 2");
+        assert_eq!(hit.date_key, "2026-08-05");
+        assert_eq!(hit.language, "中文");
+        assert!(!hit.archived);
+    }
+
+    #[test]
+    fn filters_narrow_the_results() {
+        let conn = corpus();
+        let by_model = SessionFilter {
+            model: Some("sensevoice-small".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            search_transcripts_on(&conn, "液态玻璃", &by_model, 50)
+                .unwrap()
+                .hits
+                .len(),
+            1
+        );
+
+        let by_language = SessionFilter {
+            language: Some("English".into()),
+            ..Default::default()
+        };
+        assert!(search_transcripts_on(&conn, "液态玻璃", &by_language, 50)
+            .unwrap()
+            .hits
+            .is_empty());
+
+        let by_date = SessionFilter {
+            from: Some("2026-08-04".into()),
+            to: Some("2026-08-06".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ids(&search_transcripts_on(&conn, "液态玻璃", &by_date, 50).unwrap()),
+            vec!["22"]
+        );
+    }
+
+    #[test]
+    fn a_blank_filter_field_is_not_a_filter() {
+        let conn = corpus();
+        // Select boxes hand back "" when set to the "Any" option; that has to
+        // mean unfiltered, not "match sessions whose language is empty".
+        let blank = SessionFilter {
+            language: Some(String::new()),
+            model: Some("  ".into()),
+            from: Some(String::new()),
+            ..Default::default()
+        };
+        assert_eq!(
+            search_transcripts_on(&conn, "液态玻璃", &blank, 50)
+                .unwrap()
+                .hits
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn truncation_is_reported() {
+        let conn = corpus();
+        let response =
+            search_transcripts_on(&conn, "液态玻璃", &SessionFilter::default(), 1).unwrap();
+        assert_eq!(response.hits.len(), 1);
+        assert!(response.truncated);
+
+        let full = search_transcripts_on(&conn, "液态玻璃", &SessionFilter::default(), 2).unwrap();
+        assert_eq!(full.hits.len(), 2);
+        assert!(!full.truncated, "exactly full is not truncated");
+    }
+
+    #[test]
+    fn archiving_hides_a_session_without_deleting_it() {
+        let conn = corpus();
+        let archived = set_session_archived_on(&conn, "2", true).unwrap().unwrap();
+        assert!(archived.archived_at.is_some());
+
+        let active = list_sessions_on(&conn, 50, &SessionFilter::default()).unwrap();
+        assert_eq!(active.len(), 2);
+        assert!(!active.iter().any(|session| session.id == "2"));
+
+        // The transcripts are untouched and still indexed.
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transcripts WHERE session_id = '2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+
+        let only_archived = SessionFilter {
+            archived: ArchiveScope::Archived,
+            ..Default::default()
+        };
+        let put_away = list_sessions_on(&conn, 50, &only_archived).unwrap();
+        assert_eq!(put_away.len(), 1);
+        assert_eq!(put_away[0].id, "2");
+
+        let everything = SessionFilter {
+            archived: ArchiveScope::All,
+            ..Default::default()
+        };
+        assert_eq!(list_sessions_on(&conn, 50, &everything).unwrap().len(), 3);
+
+        let restored = set_session_archived_on(&conn, "2", false).unwrap().unwrap();
+        assert!(restored.archived_at.is_none());
+        assert_eq!(
+            list_sessions_on(&conn, 50, &SessionFilter::default())
+                .unwrap()
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn archiving_an_unknown_session_reports_it() {
+        let conn = corpus();
+        assert!(set_session_archived_on(&conn, "no-such-session", true)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn search_defaults_to_the_unarchived_view() {
+        let conn = corpus();
+        set_session_archived_on(&conn, "2", true).unwrap();
+        assert_eq!(ids(&search(&conn, "液态玻璃")), vec!["11"]);
+
+        let everything = SessionFilter {
+            archived: ArchiveScope::All,
+            ..Default::default()
+        };
+        let all = search_transcripts_on(&conn, "液态玻璃", &everything, 50).unwrap();
+        assert_eq!(ids(&all), vec!["22", "11"]);
+        assert!(all.hits[0].archived, "an archived hit says so");
+    }
+
+    #[test]
+    fn filter_options_come_from_the_data() {
+        let conn = corpus();
+        set_session_archived_on(&conn, "1", true).unwrap();
+        let options = filter_options_on(&conn).unwrap();
+        assert_eq!(options.languages, vec!["English", "中文"]);
+        assert_eq!(
+            options.models,
+            vec!["fun-asr-nano-2512", "sensevoice-small"]
+        );
+        assert_eq!(options.earliest_date.as_deref(), Some("2026-08-01"));
+        assert_eq!(options.latest_date.as_deref(), Some("2026-08-08"));
+        assert_eq!(options.archived_count, 1);
+    }
+
+    #[test]
+    fn an_index_built_before_trigram_is_rebuilt() {
+        // A database from the shipped version: unicode61 index, Chinese in it.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE transcripts (
+                id TEXT PRIMARY KEY, session_id TEXT NOT NULL, text TEXT NOT NULL,
+                status TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL,
+                duration_ms INTEGER, model TEXT NOT NULL, language TEXT NOT NULL
+            );
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, started_at TEXT NOT NULL,
+                ended_at TEXT, date_key TEXT NOT NULL, model TEXT NOT NULL,
+                language TEXT NOT NULL, runtime TEXT NOT NULL
+            );
+            CREATE VIRTUAL TABLE transcripts_fts USING fts5(
+                text, content='transcripts', content_rowid='rowid'
+            );
+            CREATE TRIGGER transcripts_ai AFTER INSERT ON transcripts BEGIN
+                INSERT INTO transcripts_fts(rowid, text) VALUES (new.rowid, new.text);
+            END;
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions
+             (id, title, started_at, ended_at, date_key, model, language, runtime)
+             VALUES ('1', 'old', '2026-08-01T09:00:00Z', NULL, '2026-08-01', 'm', '中文', 'r')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcripts
+             (id, session_id, text, status, source, created_at, duration_ms, model, language)
+             VALUES ('11', '1', ?1, 'final', 'mic', '2026-08-01T09:00:00Z', NULL, 'm', '中文')",
+            params![ZH_GLASS],
+        )
+        .unwrap();
+
+        // The pre-existing index cannot answer the query. Asked directly,
+        // because the schema this database has is too old for the search query
+        // to even compile against.
+        let before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transcripts_fts WHERE transcripts_fts MATCH '\"液态玻璃\"'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, 0);
+
+        // After the migration it can, without re-inserting a single row.
+        apply_schema(&conn).unwrap();
+        let response =
+            search_transcripts_on(&conn, "液态玻璃", &SessionFilter::default(), 50).unwrap();
+        assert_eq!(ids(&response), vec!["11"]);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM transcripts", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1,
+            "the rebuild must not touch the content table"
+        );
+    }
+
+    #[test]
+    fn the_index_tracks_edits_and_deletes() {
+        let conn = corpus();
+        conn.execute(
+            "UPDATE transcripts SET text = '完全换掉的内容，谈的是天气' WHERE id = '11'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(ids(&search(&conn, "液态玻璃")), vec!["22"]);
+        assert_eq!(
+            ids(&search(&conn, "天气预报或者天气")),
+            Vec::<String>::new()
+        );
+        assert_eq!(ids(&search(&conn, "换掉的内容")), vec!["11"]);
+
+        conn.execute("DELETE FROM transcripts WHERE id = '22'", [])
+            .unwrap();
+        assert!(search(&conn, "液态玻璃").hits.is_empty());
+    }
+
+    #[test]
+    fn snippets_centre_on_the_match_and_count_characters() {
+        let terms = vec!["玻璃".to_string()];
+        let text = format!("{}玻璃{}", "前".repeat(300), "后".repeat(300));
+        let snippet = build_snippet(&text, &terms, 60);
+        // 60 characters of window, plus an ellipsis at each end. A byte-based
+        // window would have produced 20 Chinese characters here.
+        assert_eq!(snippet.chars().count(), 62, "{snippet}");
+        assert!(snippet.starts_with('…') && snippet.ends_with('…'));
+        assert!(snippet.contains("玻璃"));
+        // Some context before the match, not the match flush at the edge.
+        assert!(snippet.chars().nth(1) == Some('前'));
+    }
+
+    #[test]
+    fn short_text_is_returned_whole() {
+        let terms = vec!["玻璃".to_string()];
+        assert_eq!(
+            build_snippet("  液态玻璃的质感  ", &terms, 60),
+            "液态玻璃的质感"
+        );
+    }
+
+    #[test]
+    fn a_snippet_falls_back_to_the_head_when_nothing_matches() {
+        // The scan path can match on one term while the snippet is built from
+        // another; the window must still be valid text rather than a panic.
+        let snippet = build_snippet(&"中".repeat(200), &["никогда".to_string()], 40);
+        assert_eq!(snippet.chars().count(), 41);
+        assert!(snippet.ends_with('…'));
+    }
+
+    #[test]
+    fn fts_expressions_quote_every_term() {
+        assert_eq!(fts_match_expression(&["液态玻璃".into()]), "\"液态玻璃\"");
+        assert_eq!(
+            fts_match_expression(&["alpha".into(), "beta".into()]),
+            "\"alpha\" \"beta\""
+        );
+        assert_eq!(
+            fts_match_expression(&["say \"hi\"".into()]),
+            "\"say \"\"hi\"\"\""
+        );
+    }
+
+    #[test]
+    fn like_patterns_escape_wildcards() {
+        assert_eq!(like_pattern("100%"), "%100\\%%");
+        assert_eq!(like_pattern("a_b"), "%a\\_b%");
+        assert_eq!(like_pattern("c:\\d"), "%c:\\\\d%");
+        assert_eq!(like_pattern("液态"), "%液态%");
+    }
+
+    #[test]
+    fn terms_split_on_any_whitespace() {
+        assert_eq!(
+            search_terms("  液态玻璃   UI \t 拖动 "),
+            vec!["液态玻璃", "UI", "拖动"]
+        );
+        assert!(search_terms("   ").is_empty());
+    }
+
+    /// Search a real database, migration and all.
+    ///
+    ///     FUN_ASR_REAL_DB=~/.local/share/dev.yubo.fun-asr-desktop/fun_asr_desktop.sqlite3 \
+    ///       cargo test real_database -- --nocapture
+    ///
+    /// Skipped unless that variable is set, because it asserts against whatever
+    /// text a particular machine happens to hold. The fixtures above are a
+    /// developer's idea of what dictated Mandarin looks like; this is the real
+    /// thing, with its own punctuation, its own ASR errors and its own mixing
+    /// of scripts mid-sentence. It works on a copy, so the live database is
+    /// never touched.
+    #[test]
+    fn real_database_migrates_and_matches_its_own_text() {
+        let Ok(source) = std::env::var("FUN_ASR_REAL_DB") else {
+            eprintln!("skipped: set FUN_ASR_REAL_DB to a fun_asr_desktop.sqlite3 to run this");
+            return;
+        };
+
+        let copy = std::env::temp_dir().join(format!("fun-asr-search-{}.sqlite3", Uuid::new_v4()));
+        std::fs::copy(&source, &copy).expect("copy the database");
+        let conn = Connection::open(&copy).expect("open the copy");
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        apply_schema(&conn).expect("migrate");
+
+        // Every transcript with enough CJK to be worth searching, and a
+        // substring taken from the middle of it — the position the default
+        // tokenizer can never reach.
+        let rows: Vec<(String, String)> = {
+            let mut stmt = conn
+                .prepare("SELECT id, text FROM transcripts WHERE length(text) > 30")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<(String, String)>, _>>()
+                .unwrap();
+            rows
+        };
+
+        let mut checked = 0;
+        for (id, text) in &rows {
+            let chars: Vec<char> = text.chars().collect();
+            // A run of Han characters from the middle, so the needle is CJK
+            // rather than an easy Latin word.
+            let Some(start) = (chars.len() / 3..chars.len().saturating_sub(4)).find(|&i| {
+                chars[i..i + 4]
+                    .iter()
+                    .all(|ch| ('\u{4e00}'..='\u{9fff}').contains(ch))
+            }) else {
+                continue;
+            };
+            let long: String = chars[start..start + 4].iter().collect();
+            // Two characters is the shape of an enormous share of Chinese
+            // words — 数据, 拖拽, 玻璃 — and is below the trigram floor, so it
+            // exercises the scan. Getting this wrong is invisible in English.
+            let short: String = chars[start..start + 2].iter().collect();
+
+            for (needle, expected) in [(&long, SearchMode::Fts), (&short, SearchMode::Substring)] {
+                let response =
+                    search_transcripts_on(&conn, needle, &SessionFilter::default(), 200).unwrap();
+                assert_eq!(response.mode, expected, "wrong path for {needle:?}");
+                let hit = response
+                    .hits
+                    .iter()
+                    .find(|hit| &hit.transcript_id == id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "searching {needle:?} did not find the transcript it came from ({id})"
+                        )
+                    });
+                assert!(
+                    hit.snippet.contains(needle),
+                    "the snippet for {needle:?} does not show the match: {}",
+                    hit.snippet
+                );
+                eprintln!(
+                    "{needle}  ->  {} hit(s) via {:?}  |  {} · {}",
+                    response.hits.len(),
+                    response.mode,
+                    hit.session_title,
+                    hit.snippet
+                );
+            }
+            checked += 1;
+        }
+
+        let _ = std::fs::remove_file(&copy);
+        assert!(checked > 0, "no Chinese transcripts found in {source}");
+        eprintln!("{checked} real Chinese transcripts, each found by a substring of itself");
+    }
 }
 
 fn insert_transcript_inner(
@@ -3620,4 +4786,3 @@ fn compact_process_error(stdout: &[u8], stderr: &[u8]) -> String {
         message
     }
 }
-
