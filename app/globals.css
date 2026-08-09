@@ -66,15 +66,24 @@
   --c-rust: oklch(0.577 0.196 26);
   --c-moss: oklch(0.55 0.118 156);
 
-  /* Ambient field — what the glass has to refract. Halved from where it was:
-     at the old alphas this was a picture rather than a tint, and with the
-     transcript column often empty it was the loudest thing on screen. Glass
-     needs something behind it to bend, not a sunset. */
-  --ambient-base: oklch(0.945 0.009 264);
-  --ambient:
-    radial-gradient(115% 85% at 4% -8%, oklch(0.70 0.16 258 / 0.19) 0%, transparent 62%),
-    radial-gradient(95% 78% at 104% -2%, oklch(0.72 0.15 322 / 0.14) 0%, transparent 58%),
-    radial-gradient(125% 95% at 42% 110%, oklch(0.82 0.13 66 / 0.15) 0%, transparent 62%);
+  /* --- The canvas --------------------------------------------------------
+     The one colour behind everything, and deliberately the *only* place it is
+     written down.
+
+     It used to be a three-colour radial bloom — blue at the top left, magenta
+     at the top right, warm at the bottom — sold as "something for the glass to
+     refract". It refracted nothing anybody could name: it carried no
+     information, it was the loudest thing on screen whenever the transcript
+     column was empty, and the painted highlights on the glass sat on top of a
+     saturated field and read as glare. Plain white does the same job for the
+     material and asks nothing of the reader.
+
+     Single variable, single declaration, on purpose. Reading the desktop's own
+     colour later — the portal exposes `org.freedesktop.appearance`
+     `accent-color`, and KDE additionally writes `[Colors:Window]
+     BackgroundNormal` in `kdeglobals` — should be one assignment here and
+     nothing else. */
+  --app-canvas: #ffffff;
 
   /* Glass — structural (sidebars, toolbars). These float over scrolling
      content, which is the only place blur has anything to bite on, so they get
@@ -87,8 +96,8 @@
     oklch(1 0 0 / 0) 42%
   );
 
-  /* Glass — raised (cards, popovers). Sits over the ambient field rather than
-     over content, so it leans a little denser to keep text comfortable. */
+  /* Glass — raised (cards, popovers). Sits over the canvas rather than over
+     content, so it leans a little denser to keep text comfortable. */
   --glass-raised-fill: oklch(1 0 0 / 0.6);
   --glass-raised-tint: linear-gradient(
     180deg,
@@ -188,9 +197,10 @@
      radius, no shadow, because the compositor owns all three. macOS is that
      case, and so is a maximised window on any platform.
 
-     `[data-frame="csd"]` is set by `<WindowFrame>` once it knows the window is
-     undecorated. There the app draws its own frame, and the three values below
-     become load bearing:
+     `[data-frame="csd"]` is set by the backend's document-start script (see
+     `csd_bootstrap_script` in `lib.rs`) and re-asserted by `<WindowFrame>`.
+     There the app draws its own frame, and the three values below become load
+     bearing:
 
      - `--gutter` is a ring of *transparent window* around the visible shell.
        Wayland compositors do not shadow a client-side-decorated surface — that
@@ -208,7 +218,21 @@
        `pointer-events`, so a transparent margin would swallow clicks meant for
        whatever is behind the window. `<WindowFrame>` fills the ring with
        resize grips, which is also the affordance `set_decorations(false)` took
-       away in the first place. */
+       away in the first place.
+
+     Two variables, not one. `--gutter-size` is *how wide the ring is when there
+     is one*, and it is the only thing the backend writes — as an inline style
+     on `<html>`, so that the CSS and the window the compositor allocated cannot
+     disagree about the number. It is deliberately not declared here: an unset
+     custom property is what lets `var(--gutter-size, 18px)` below fall back,
+     and a `0px` default here would silently close the gutter on any build where
+     the backend script did not run. `--gutter` is *how wide the ring is right
+     now*, and it is owned by the rules in this file, which is what lets a
+     maximised window close it. Writing the backend's number straight into
+     `--gutter` was the bug: an inline custom property beats every stylesheet
+     rule, so the maximised override further down could never fire, and a
+     maximised window kept its 18px of transparent border, its rounded corners
+     and its shadow. */
   --gutter: 0px;
   --r-window: 0px;
   --shadow-window: none;
@@ -301,11 +325,9 @@
     --c-rust: oklch(0.695 0.175 27);
     --c-moss: oklch(0.755 0.145 158);
 
-    --ambient-base: oklch(0.168 0.012 264);
-    --ambient:
-      radial-gradient(115% 85% at 4% -8%, oklch(0.55 0.17 262 / 0.22) 0%, transparent 62%),
-      radial-gradient(95% 78% at 104% -2%, oklch(0.52 0.15 322 / 0.16) 0%, transparent 58%),
-      radial-gradient(125% 95% at 42% 110%, oklch(0.55 0.12 62 / 0.13) 0%, transparent 62%);
+    /* Neutral, not tinted: dark mode's canvas is the same decision as light
+       mode's, taken one lightness step at a time rather than in another hue. */
+    --app-canvas: oklch(0.17 0 0);
 
     --glass-chrome-fill: oklch(0.24 0.012 264 / 0.5);
     --glass-chrome-tint: linear-gradient(
@@ -342,9 +364,12 @@
   }
 }
 
-/* The app-drawn window frame. Set by `<WindowFrame>` after it has confirmed the
-   window carries no system decorations, so a platform that keeps its own frame
-   never pays for this.
+/* The app-drawn window frame. Set at document start by the backend, before the
+   first frame is painted, so a platform that keeps its own frame never pays for
+   this — and so this window never paints one frame with the wrong geometry.
+   That second half is not a nicety: WebKitGTK never clears a transparent
+   surface, so a single frame drawn with the gutter closed leaves the page
+   background stamped into the ring permanently.
 
    Light and dark carry different shadows on purpose. A shadow is a hole in the
    light, and on a dark desktop a 26%-black penumbra is invisible; the dark
@@ -352,10 +377,10 @@
    the thing that separates the window from the desktop is the top edge catching
    light, not the shadow underneath. */
 :root[data-frame="csd"] {
-  /* 18px is the fallback; `<WindowFrame>` overwrites it with the number the
-     backend used to enlarge the window, so the ring and the window size can
+  /* 18px is the fallback; the backend writes the number it actually enlarged
+     the window by into `--gutter-size`, so the ring and the window size can
      never disagree about how wide it is. */
-  --gutter: 18px;
+  --gutter: var(--gutter-size, 18px);
   --r-window: 12px;
 
   /* The key shadow's reach is written as a fraction of the gutter rather than
@@ -610,9 +635,7 @@
        fontconfig default, which costs Han — dense glyphs at 11-13px are exactly
        where stem rendering shows. The platform's own rasterisation is better
        tuned for this than a blanket override. */
-    background: var(--ambient-base);
-    background-image: var(--ambient);
-    background-attachment: fixed;
+    background: var(--app-canvas);
   }
 
   button,
@@ -1351,23 +1374,12 @@ body:has(main[data-transparent="true"]) {
 /* ==========================================================================
    Where the page background lives
    ==========================================================================
-   Normally `body` paints it, and it fills the window because the window is the
-   viewport. Under client-side decorations that is exactly wrong: `body` covers
-   the gutter too, so the ambient field would paint over the very transparency
-   the shadow needs, and the window would go back to being an opaque rectangle
-   with a shadow drawn *inside* it.
-
-   So the background moves one box inwards, onto the shell. Unlayered on
-   purpose — `body`'s background is set in `@layer base`, and a layered rule
-   loses to an unlayered one no matter how specific it is. Same mechanism the
-   voice-bar rule above relies on. */
-:root[data-frame="csd"] body {
-  background: transparent;
-}
-:root[data-frame="csd"] .win-shell {
-  background-color: var(--ambient-base);
-  background-image: var(--ambient);
-}
+   On `body`, and only on `body`. It used to have to move one box inwards, onto
+   the shell, because the app painted its own window frame and `body` would
+   otherwise have filled the transparent ring the shadow needed. GTK draws the
+   frame now (see `adopt_gtk_csd` in `lib.rs`), the window is opaque again, and
+   the viewport and the window are the same rectangle — so the ordinary rule is
+   the correct one. */
 
 /* ==========================================================================
    User preferences
@@ -1400,9 +1412,6 @@ body:has(main[data-transparent="true"]) {
   .field {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
-  }
-  body {
-    background-image: none;
   }
 }
 

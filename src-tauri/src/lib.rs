@@ -42,7 +42,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tauri::{ipc::Channel, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{ipc::Channel, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use uuid::Uuid;
 
 // Official QwenAudio/Fun-ASR llama.cpp runtime binaries (release runtime-llamacpp-v0.1.9).
@@ -2534,6 +2534,10 @@ fn resize_voice_bar(app: AppHandle, width: f64, height: f64) -> Result<(), Strin
         .map(|value| *value)
         .unwrap_or(panel::PanelAnchor::BottomCenter);
     panel::reposition(&window, anchor, VOICE_BAR_MARGIN, Some(size))?;
+    // The native material is a view in this window, so it has to be told the
+    // capsule changed shape. Its radius is half the height, and the height is
+    // exactly what just moved.
+    panel::sync_material(&window);
     Ok(())
 }
 
@@ -2565,61 +2569,170 @@ fn hide_voice_bar(app: AppHandle) -> Result<(), String> {
     window.hide().map_err(|err| err.to_string())
 }
 
-/// Whether the app asks the compositor for genuinely transparent windows, and
-/// therefore whether the frontend may paint into a transparent gutter.
+/// Whether the frontend draws the window frame itself.
 ///
-/// One constant drives both halves, and it has to stay that way. "Decorations
-/// are off" does *not* imply "the window is transparent" — they are separate
-/// requests and there is a state where the first has happened and the second
-/// has not. A gutter in that state is not merely ineffective: the ring paints
-/// in the page's background colour and reads as a second, fake window frame
-/// drawn around the real one. Deriving the frontend's behaviour from
-/// `isDecorated()` is what produced exactly that.
+/// Now false everywhere, and the reason is worth keeping.
 ///
-/// So the answer is published by `window_chrome`, and rolling the feature back
-/// is a single edit here: the window goes opaque and the frontend goes back to
-/// square corners together, with no way for the two to disagree.
-#[cfg(target_os = "linux")]
-const CSD_TRANSPARENT: bool = true;
-#[cfg(not(target_os = "linux"))]
+/// The app used to take the decorations off on Linux, make the window
+/// transparent, and paint its own shadow into an 18px transparent ring — a
+/// "gutter" — around the visible shell. That could not be made to work, because
+/// **WebKitGTK never clears a transparent window's surface**: every frame is
+/// composited `src OVER dst` onto whatever was there before, so any pixel ever
+/// painted opaque stays opaque for the life of that backing store. The window's
+/// first frame is painted before any script has run, with the gutter still
+/// closed, and it stamps the page background into the ring permanently.
+///
+/// Measured on the shipped build: the ring transmitted 0.5–1.7% of the desktop
+/// behind it — 98–99% opaque — in the ambient gradient's own colours, blue along
+/// the top and warm along the bottom. That was the "shadow" the user saw: not a
+/// shadow, a frozen copy of the window's own background, which is exactly why it
+/// ended on a hard straight line instead of fading out.
+///
+/// The frame is now GTK's job (see `adopt_gtk_csd`), which puts the shadow in a
+/// layer the webview does not own and therefore cannot spoil. The frontend needs
+/// no gutter, no radius, no shadow and no resize grips, and `window_chrome`
+/// reporting false is what turns all four off in one answer.
 const CSD_TRANSPARENT: bool = false;
 
-/// Transparent margin the client-side-decorated windows keep around their
-/// visible shell, in logical pixels.
-///
-/// A window with no server decorations gets no shadow either — KWin will not
-/// draw one for a surface that says it decorates itself, and a client cannot
-/// paint outside its own surface. So the surface is made bigger than the shell
-/// and the extra ring is left transparent for the CSS to cast a shadow into.
-///
-/// 18 is not arbitrary: it is exactly the reach of the key shadow in
-/// `globals.css` (offset 10 + blur 24/2 − spread 4). A smaller gutter would
-/// clip the penumbra along a straight line, which looks worse than no shadow
-/// at all. **Changing it here means changing the shadow there in the same
-/// commit** — the two numbers are one number.
-///
-/// macOS gets zero: the system draws the shadow, and asking for a transparent
-/// window there would pull in `macOSPrivateApi` and shut the door on the Mac
-/// App Store for no gain. So does any platform where the transparency was not
-/// applied — a gutter is only ever as good as the transparency under it.
-const CSD_GUTTER: f64 = if CSD_TRANSPARENT { 18.0 } else { 0.0 };
+/// Width of that gutter. Zero: there is no gutter any more.
+const CSD_GUTTER: f64 = 0.0;
 
 /// Total width and height the gutter adds — one on each side.
-///
-/// Window sizes are grown by this so the *usable* area is unchanged: the
-/// gutter is padding, not content, and a user who asked for a 1040px minimum
-/// meant 1040px they can put things in.
 const CSD_PADDING: f64 = CSD_GUTTER * 2.0;
+
+/// Hand the window frame to GTK.
+///
+/// # What this buys
+///
+/// GTK3 has a complete client-side-decoration implementation of its own, and it
+/// switches into it the moment a window is given a titlebar widget. From then on
+/// GTK — not the page — draws the drop shadow and the rounded corners, in the
+/// area *outside* the child allocation, and hands the compositor the real frame
+/// bounds via the window geometry. Three things fall out of that:
+///
+///   * **The shadow is real.** It is painted by GTK into the toplevel's own
+///     surface region, which the WebKitGTK never-clears bug cannot reach, and it
+///     is a true gradient rather than a box-shadow clipped by a window rectangle.
+///   * **Maximising is correct by construction.** GTK drops the shadow and the
+///     corner radius itself when the toplevel is maximised or tiled; there is no
+///     `isMaximized()` to poll and no race to lose.
+///   * **Resizing is the toolkit's.** GTK owns the resize edges around the
+///     shadow, so a drag never crosses the JS bridge — which is what made the
+///     hand-drawn grips lag the pointer.
+///
+/// # The two constraints
+///
+/// `gtk_window_set_titlebar` must be called **before the window is realized**,
+/// so every window that wants this is built hidden and shown from here.
+///
+/// And the window must *not* be app-paintable, which is what Tauri's
+/// `transparent(true)` sets: `gtk_window_draw` skips rendering the decoration
+/// node entirely for an app-paintable window, so asking for transparency would
+/// silently switch the shadow back off. GTK gives itself the RGBA visual it
+/// needs when CSD is enabled, so nothing is lost by leaving transparency alone.
+///
+/// The titlebar widget is an empty box with a zero height request: GTK needs
+/// *a* widget to enter CSD, the app already draws its own header inside the
+/// page, and a real `GtkHeaderBar` would mean two title bars stacked.
+#[cfg(target_os = "linux")]
+fn adopt_gtk_csd<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    use gtk::prelude::*;
+
+    match window.gtk_window() {
+        Ok(gtk_window) => {
+            let titlebar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            titlebar.set_size_request(-1, 0);
+            // Hidden, not merely empty. A *visible* titlebar still gets a row of
+            // its own — measured at 1 logical px even with the theme's
+            // `min-height` removed — and since it is transparent that row read
+            // as a hairline of desktop along the top of the window, including
+            // when maximised. GTK skips allocating an invisible title box
+            // entirely while still counting the window as client-decorated.
+            // `no_show_all` is what stops `gtk_widget_show_all` putting it back.
+            titlebar.set_no_show_all(true);
+            titlebar.hide();
+            gtk_window.set_titlebar(Some(&titlebar));
+            gtk_window.set_decorated(true);
+            collapse_gtk_titlebar(&gtk_window);
+        }
+        Err(err) => {
+            eprintln!(
+                "[{}] no GTK window to decorate ({err}); the frame stays bare",
+                window.label()
+            );
+        }
+    }
+    // Unconditional: the window was built hidden so the titlebar could be set
+    // before realize, and a failure above must not cost the user the window.
+    if let Err(err) = window.show() {
+        eprintln!("[{}] could not be shown: {err}", window.label());
+    }
+}
+
+/// Take the height out of the titlebar GTK insists on having.
+///
+/// `set_size_request(-1, 0)` is not enough: the theme gives the `titlebar` node
+/// a `min-height` (40px under Breeze), and a size request cannot go below a
+/// widget's CSS minimum. Measured before this existed — the window came up 40px
+/// taller than it asked for, with an empty white band above the app's own
+/// header. So the minimum is removed in the same language it was set in.
+///
+/// Scoped to `.csd`, and to this process, which only ever has this app's own
+/// GTK windows in it.
+#[cfg(target_os = "linux")]
+fn collapse_gtk_titlebar(gtk_window: &gtk::ApplicationWindow) {
+    use gtk::prelude::*;
+
+    const CSS: &[u8] = b"
+window.csd > .titlebar:not(headerbar) {
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+/* A maximised window has no outside. The theme still leaves the decoration a
+   hairline of margin there, which shows up as a 1px transparent line along the
+   top of the screen -- measured, alpha 0 across the full width. */
+window.csd.maximized decoration,
+window.csd.tiled decoration,
+window.csd.fullscreen decoration {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+";
+    let provider = gtk::CssProvider::new();
+    if let Err(err) = provider.load_from_data(CSS) {
+        eprintln!("[gtk-csd] titlebar css rejected: {err}");
+        return;
+    }
+    if let Some(screen) = GtkWindowExt::screen(gtk_window) {
+        gtk::StyleContext::add_provider_for_screen(
+            &screen,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn adopt_gtk_csd<R: tauri::Runtime>(_window: &tauri::WebviewWindow<R>) {}
 
 /// Apply the decoration policy both app windows share.
 ///
 /// macOS keeps its real title bar and lets content run under the traffic
 /// lights — dropping decorations there would mean reimplementing
 /// close/minimise/zoom, and a hand-drawn imitation never matches the
-/// platform's behaviour or its accessibility affordances. Linux draws its own
-/// header, so it takes the decorations off; the transparency that lets it draw
-/// a shadow is gated on `CSD_TRANSPARENT`, the same flag `window_chrome`
-/// reports to the frontend.
+/// platform's behaviour or its accessibility affordances.
+///
+/// Linux keeps its decorations too, in GTK's sense of the word: the toolkit is
+/// told to decorate the window and then handed an empty titlebar, which is what
+/// puts it in charge of the shadow and the resize edges without putting a second
+/// header above the app's own. The window is built hidden because
+/// `adopt_gtk_csd` has to run before it is realized.
 fn apply_window_chrome<'a, R: tauri::Runtime, M: Manager<R>>(
     builder: WebviewWindowBuilder<'a, R, M>,
 ) -> WebviewWindowBuilder<'a, R, M> {
@@ -2631,12 +2744,7 @@ fn apply_window_chrome<'a, R: tauri::Runtime, M: Manager<R>>(
     }
     #[cfg(target_os = "linux")]
     {
-        let builder = builder.decorations(false);
-        if CSD_TRANSPARENT {
-            builder.transparent(true)
-        } else {
-            builder
-        }
+        builder.visible(false)
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
@@ -2694,6 +2802,7 @@ fn show_settings_window(app: AppHandle) -> Result<(), String> {
     .build()
     .map_err(|err| err.to_string())?;
 
+    adopt_gtk_csd(&window);
     enforce_window_size(window, width, height);
     Ok(())
 }
@@ -2742,9 +2851,26 @@ fn enforce_window_size(window: tauri::WebviewWindow, width: f64, height: f64) {
         // after it would only ever record our own optimism.
         let measure = || -> Option<(f64, f64)> {
             thread::sleep(Duration::from_millis(700));
-            let scale = window.scale_factor().ok()?;
-            let size = window.inner_size().ok()?;
-            Some((size.width as f64 / scale, size.height as f64 / scale))
+            // On a GTK client-side-decorated window, `inner_size()` reports the
+            // whole GdkWindow, which *includes* the shadow margins the toolkit
+            // reserves outside the frame — measured at 43 logical px a side, so
+            // 86 too wide and 86 too tall. Comparing that against the size that
+            // was asked for would read as "the compositor made it 86px too big"
+            // on every check and shrink the window by that much, forever. GTK's
+            // own `size()` is the frame, which is what was requested.
+            #[cfg(target_os = "linux")]
+            {
+                use gtk::prelude::*;
+                let gtk_window = window.gtk_window().ok()?;
+                let (w, h) = gtk_window.size();
+                return Some((w as f64, h as f64));
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let scale = window.scale_factor().ok()?;
+                let size = window.inner_size().ok()?;
+                Some((size.width as f64 / scale, size.height as f64 / scale))
+            }
         };
         let good = |w: f64, h: f64| (w - width).abs() <= 1.0 && (h - height).abs() <= 1.0;
 
@@ -2758,6 +2884,13 @@ fn enforce_window_size(window: tauri::WebviewWindow, width: f64, height: f64) {
             let Some((actual_w, actual_h)) = measure() else {
                 return;
             };
+            // A user who maximised the window inside the settling window meant
+            // it. Re-stating the built size here would silently un-maximise a
+            // window the compositor had already sized correctly.
+            if window.is_maximized().unwrap_or(false) {
+                eprintln!("[{}] maximised while settling; size left alone", window.label());
+                return;
+            }
             if good(actual_w, actual_h) {
                 let how = if attempt == 0 { "confirmed" } else { "corrected" };
                 eprintln!(
@@ -2880,7 +3013,7 @@ pub fn run() {
             // array, so both window definitions would have to be duplicated and
             // would drift. In Rust the `cfg` is exact and lives next to the
             // reason for it.
-            apply_window_chrome(
+            let main_window = apply_window_chrome(
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("/".into()))
                     .title("Fun ASR Desktop")
                     .inner_size(1240.0 + CSD_PADDING, 820.0 + CSD_PADDING)
@@ -2888,6 +3021,7 @@ pub fn run() {
                     .center(),
             )
             .build()?;
+            adopt_gtk_csd(&main_window);
 
             // The tray icon is how the user knows the app is alive at all: it
             // is driven by a global hotkey, so the main window is usually shut

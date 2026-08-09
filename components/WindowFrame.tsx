@@ -4,49 +4,52 @@ import { useEffect, useState, type ReactNode } from "react";
 import { getWindowChrome } from "@/lib/tauri";
 
 /**
- * The window as the app draws it.
+ * The window as the app draws it — which, now, is not much of it.
  *
- * On macOS the system still owns the frame — the traffic lights, the rounded
- * corners and the shadow all come from AppKit, and this component is a plain
- * wrapper that costs nothing.
+ * Every platform's own toolkit owns the frame:
  *
- * On Linux the window is created with `set_decorations(false)`, which hands the
- * app three jobs the compositor used to do:
+ *   * **macOS** keeps the traffic lights, the rounded corners and the shadow in
+ *     AppKit, and this component is a plain wrapper that costs nothing.
+ *   * **Linux** hands the frame to GTK. The window is decorated in GTK's sense
+ *     and given an empty, hidden titlebar widget, which puts the toolkit into
+ *     client-side decorations: *GTK* paints the drop shadow and the corners,
+ *     outside the webview's allocation, and owns the resize edges. See
+ *     `adopt_gtk_csd` in `lib.rs`.
  *
- *   1. **The shadow.** A Wayland compositor does not shadow a client-side-
- *      decorated surface; KWin expects the client to paint its own. A
- *      `box-shadow` can only fall outside the element it is on, so the window
- *      has to be bigger than the shell — hence `--gutter`, a ring of
- *      transparent window around the visible surface. This only works if the
- *      window was created with `transparent: true`; without it the gutter is an
- *      opaque band of page background and the shadow lands on nothing.
- *   2. **The rounded corners.** Same reason: a radius on a shell that reaches
- *      the window edge is cut square by the window rectangle.
- *   3. **Resizing.** Dropping decorations drops the compositor's resize border
- *      with them, so a bare CSD window cannot be resized by the pointer at all.
- *      The eight grips below give it back. They also solve the gutter's own
- *      problem: a Wayland surface receives pointer events across its whole
- *      rectangle regardless of `pointer-events`, so a transparent margin is
- *      going to eat clicks whatever we do — better that it eats them for a
- *      reason.
+ * # What used to be here, and why it could not work
  *
- * Which case we are in is decided by one backend answer, `window_chrome`, and
- * by nothing this side can infer.
+ * Linux used to run undecorated and transparent, with the app painting its own
+ * shadow into an 18px transparent ring — a "gutter" — around the visible shell,
+ * plus eight hand-drawn resize grips to replace the border that dropping
+ * decorations took away.
  *
- * The tempting inference — "the window is undecorated, therefore we draw the
- * frame, therefore open the gutter" — is wrong, and it shipped a visible bug
- * before this comment existed. Decorations were dropped long before
- * transparency was added, so for a while both were true of the same window:
- * undecorated *and* opaque. A gutter on an opaque window cannot be transparent;
- * it renders as a band of page background, and the user sees a hard pale border
- * around the window — two frames where there should be one.
+ * That could not be made correct, for a reason that has nothing to do with the
+ * CSS: **WebKitGTK never clears a transparent window's surface.** Every frame
+ * composites `src OVER dst` onto whatever was there before, so any pixel ever
+ * painted opaque stays opaque for the life of that backing store — and the
+ * window's first frame is painted before any script runs, with the gutter still
+ * closed, stamping the page background into the ring permanently. Measured on
+ * the shipped build, that ring transmitted 0.5–1.7% of the desktop behind it
+ * (98–99% opaque) in the page's own gradient colours. That was the "shadow"
+ * that bled and ended on a hard straight line: not a shadow, a frozen copy of
+ * the window's background.
  *
- * "Capability A is off" does not imply "capability B is on", however obviously
- * the two belong to the same idea, because they can land in separate commits
- * and the gap between them is what the user sees. So the frontend asks about
- * the fact it actually depends on: is this window transparent. The default
- * until that is answered is *no gutter*, because the cost of being wrong that
- * way is a missing shadow rather than a broken window.
+ * Moving the shadow into GTK's layer takes it out of the webview's surface
+ * entirely, and takes maximising and resizing with it — GTK drops the shadow
+ * and the radius when the toplevel is maximised, and handles resize drags in
+ * the toolkit rather than across the JS bridge.
+ *
+ * # What is left
+ *
+ * `window_chrome` still answers one question — *does the frontend draw the
+ * frame* — and it now answers false everywhere, which is what closes the
+ * gutter, squares the corners and drops the shadow in `globals.css`.
+ *
+ * The grips below are kept, and kept gated on `isDecorated()`, because they are
+ * the answer to a different question: a window with no decorations at all has
+ * no pointer resize affordance whatsoever. While GTK decorates the window this
+ * renders nothing. If that ever stops being true, the window is still
+ * resizable, which is not a property worth betting on a config flag.
  */
 
 type ResizeDirection =
@@ -76,12 +79,14 @@ async function currentWindow() {
 }
 
 export function WindowFrame({ children }: { children: ReactNode }) {
-  // Starts closed. An extra frame without the shadow is invisible; an extra
-  // frame *with* a gutter on an opaque window is the bug described above.
+  // Starts closed, and the backend currently never opens it. Kept as state
+  // rather than deleted because it is the one switch that turns the app-drawn
+  // frame back on, and the frame it turns on has to stay coherent.
   const [csd, setCsd] = useState(false);
   // Separate question, separate answer. Whether the pointer can resize this
-  // window depends on whether the compositor still draws a resize border, which
-  // is what `isDecorated()` reports — and on nothing about transparency.
+  // window depends on whether the toolkit still gives it a resize border, which
+  // is what `isDecorated()` reports — and on nothing about the frame the page
+  // draws.
   const [grips, setGrips] = useState(false);
 
   useEffect(() => {
@@ -90,12 +95,15 @@ export function WindowFrame({ children }: { children: ReactNode }) {
       .then((chrome) => {
         if (cancelled) return;
         setCsd(chrome.csdGutter);
-        // The backend adds this ring to the window size, so reading the number
-        // back from it is what stops the two definitions of "18px" drifting.
+        // `--gutter-size`, never `--gutter`. An inline custom property outranks
+        // every stylesheet rule, so writing `--gutter` here would pin the ring
+        // open and the maximised state could not close it — which is exactly
+        // how a maximised window ended up keeping its border. The stylesheet
+        // reads this one and decides what the gutter *currently* is.
         if (chrome.csdGutter) {
-          document.documentElement.style.setProperty("--gutter", `${chrome.gutter}px`);
+          document.documentElement.style.setProperty("--gutter-size", `${chrome.gutter}px`);
         } else {
-          document.documentElement.style.removeProperty("--gutter");
+          document.documentElement.style.removeProperty("--gutter-size");
         }
       })
       .catch(() => {
@@ -121,24 +129,28 @@ export function WindowFrame({ children }: { children: ReactNode }) {
     document.documentElement.dataset.windowResize = grips ? "grips" : "system";
   }, [grips]);
 
-  // A maximised window has no outside, so the gutter, the radius and the
-  // shadow all have to go — otherwise maximising leaves a transparent border
-  // and four notches of desktop at the corners.
+  // A window drawing its own frame has to close the gutter, square the corners
+  // and drop the shadow when it is maximised, or maximising leaves a border of
+  // desktop around a window the user asked to fill the screen. Inert while the
+  // toolkit owns the frame — GTK does this itself — and it costs one attribute
+  // to keep the app-drawn path correct if it is ever switched back on.
   useEffect(() => {
     if (!csd) {
       document.documentElement.removeAttribute("data-window-state");
       return;
     }
     let cancelled = false;
-    let unlisten: (() => void) | undefined;
+    const stops: (() => void)[] = [];
+
+    const write = (maximized: boolean) => {
+      if (cancelled) return;
+      document.documentElement.dataset.windowState = maximized ? "maximized" : "floating";
+    };
 
     const sync = async () => {
       try {
         const window = await currentWindow();
-        const maximized = await window.isMaximized();
-        if (!cancelled) {
-          document.documentElement.dataset.windowState = maximized ? "maximized" : "floating";
-        }
+        write(await window.isMaximized());
       } catch {
         // Not running under Tauri.
       }
@@ -149,13 +161,13 @@ export function WindowFrame({ children }: { children: ReactNode }) {
       .then((window) => window.onResized(() => void sync()))
       .then((stop) => {
         if (cancelled) stop();
-        else unlisten = stop;
+        else stops.push(stop);
       })
       .catch(() => {});
 
     return () => {
       cancelled = true;
-      unlisten?.();
+      for (const stop of stops) stop();
     };
   }, [csd]);
 

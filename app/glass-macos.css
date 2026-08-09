@@ -1,0 +1,231 @@
+/* ==========================================================================
+   macOS material overrides
+   ==========================================================================
+
+   Scoped to `[data-platform="macos"]`, which the inline script in `layout.tsx`
+   sets before the first paint. Nothing here may leak to Linux: that platform's
+   window decoration and pill material are being tuned against a completely
+   different constraint (WebKitGTK never clears a transparent surface), and the
+   two answers are genuinely different. Loaded after `globals.css` and left
+   *unlayered* on purpose — Tailwind puts the base sheet's rules in `@layer`,
+   and unlayered rules win over layered ones regardless of specificity, so
+   these do not need `!important` and do not need to out-specify anything.
+
+   ## What was wrong
+
+   Two separate things read as "光感太强".
+
+   1. **The voice bar was a picture of glass, not glass.** The capsule painted
+      itself opaque (`--pill-alpha: 1`) and drew a specular rim, a top
+      highlight and an inner glow at fixed brightness. A drawn highlight cannot
+      know what is behind the window, so it is the same hot white over a black
+      terminal as over a white document — and a highlight that never responds
+      reads as moulded plastic. Worse, the webview underneath was painting
+      WebKit's own `#1E1E1E` dark-scheme base across the whole window
+      rectangle, so the "floating capsule" actually sat on a dark rectangle.
+      Both are gone: `macos_panel.rs` turns the webview's backdrop off and puts
+      an `NSGlassEffectView` behind it, and everything below gets out of its
+      way. The material, the edge, the refraction and the shadow are now the
+      system's, which is the only way any of them can react to the desktop.
+
+   2. **The window chrome was over-lit.** Every card, control and bar carried a
+      1px specular ring peaking at 85% white plus a 55%-white inset highlight,
+      on top of a saturated three-colour ambient gradient. That is a lot of
+      light for surfaces that, on this platform, are not translucent at all —
+      the main window is opaque, so the "glass" was pure paint. macOS draws
+      these as a near-neutral surface with a hairline; the values below are the
+      same design one long step calmer.
+   ========================================================================== */
+
+:root[data-platform="macos"] {
+  /* The window background is no longer set here. It used to be a three-colour
+     ambient field, softened on this platform rather than removed; the field is
+     now gone on every platform and the canvas is a single `--app-canvas` in
+     globals.css. Nothing macOS-specific is needed: a neutral surface is what
+     the platform wants anyway, since on an opaque window the colour in the room
+     can only arrive through a material, and there is none. */
+
+  /* The rim, one long step down. This is a 1px ring drawn round every card,
+     field and button; at 85% white it was the brightest thing in the window
+     and it was on *everything*, which is what made the interface look
+     lacquered. Apple's equivalent is a hairline you notice only when you look
+     for it, and the gradient survives only so the ring is not a flat stroke. */
+  --rim: linear-gradient(
+    155deg,
+    oklch(1 0 0 / 0.34) 0%,
+    oklch(1 0 0 / 0.10) 45%,
+    oklch(1 0 0 / 0.20) 100%
+  );
+  --spec-top: oklch(1 0 0 / 0.22);
+  --spec-shade: oklch(0.20 0.03 264 / 0.06);
+
+  /* The white wash poured over cards and chrome. Same reasoning: it is a
+     lighting effect on a surface that is not lit. */
+  --glass-chrome-tint: linear-gradient(
+    180deg,
+    oklch(1 0 0 / 0.08) 0%,
+    oklch(1 0 0 / 0) 42%
+  );
+  --glass-raised-tint: linear-gradient(
+    180deg,
+    oklch(1 0 0 / 0.10) 0%,
+    oklch(1 0 0 / 0) 46%
+  );
+
+  /* NSVisualEffectView boosts saturation, but nothing like 180% — that number
+     was compensating for a blur that has nothing to sample on this platform. */
+  --sat: 150%;
+
+  /* ---- The voice bar ----------------------------------------------------
+     Every painted knob goes to zero. The capsule is now a hole in the window
+     that the system's glass shows through, so anything drawn here is drawn
+     *on top of* the material and competes with it. */
+  --pill-alpha: 0;
+  --pill-glow: transparent;
+  --pill-top: transparent;
+  --pill-text-shadow: none;
+  --pill-rim: none;
+
+  /* Text on the glass follows the *appearance*, not the backdrop.
+     `NSGlassEffectView` in its regular style resolves light in Light and dark
+     in Dark, so the label colour that matches it is the same one the rest of
+     the app uses — not the permanent white the painted capsule needed to
+     survive an unknown wallpaper. */
+  --pill-ink: oklch(0.24 0.017 264);
+  --pill-ink-2: oklch(0.40 0.014 264);
+  --pill-smoke: oklch(0.46 0.014 264);
+  --pill-faint: oklch(0.58 0.012 264);
+  --pill-fill: oklch(0.20 0.02 264 / 0.08);
+  --pill-fill-strong: oklch(0.20 0.02 264 / 0.14);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-platform="macos"] {
+    --rim: linear-gradient(
+      155deg,
+      oklch(1 0 0 / 0.15) 0%,
+      oklch(1 0 0 / 0.04) 45%,
+      oklch(1 0 0 / 0.09) 100%
+    );
+    --spec-top: oklch(1 0 0 / 0.08);
+    --spec-shade: oklch(0 0 0 / 0.16);
+
+    --glass-chrome-tint: linear-gradient(
+      180deg,
+      oklch(1 0 0 / 0.04) 0%,
+      oklch(1 0 0 / 0) 45%
+    );
+    --glass-raised-tint: linear-gradient(
+      180deg,
+      oklch(1 0 0 / 0.05) 0%,
+      oklch(1 0 0 / 0) 46%
+    );
+
+    --pill-ink: oklch(0.97 0.004 264);
+    --pill-ink-2: oklch(0.82 0.010 264);
+    --pill-smoke: oklch(0.76 0.012 264);
+    --pill-faint: oklch(0.66 0.012 264);
+    --pill-fill: oklch(1 0 0 / 0.10);
+    --pill-fill-strong: oklch(1 0 0 / 0.17);
+  }
+}
+
+/* The desktop-blur profile exists for the Linux compositor path, where the
+   only thing it changes is how hard the text has to fight. macOS reaches it
+   too — the glass counts as blur behind the window — but the brighter inner
+   glow it asks for is exactly the paint being removed here. */
+:root[data-platform="macos"][data-desktop-blur="true"] {
+  --pill-glow: transparent;
+  --pill-text-shadow: none;
+}
+
+/* ==========================================================================
+   The voice bar
+   ==========================================================================
+   The capsule keeps its geometry — the window is still sized to the pill plus
+   six points a side, and `macos_panel.rs` shapes the glass to match — and
+   gives up everything else. No fill, no rim, no inner glow, no text shadow.
+   ========================================================================== */
+
+[data-platform="macos"] .glass-pill {
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+  text-shadow: none;
+  color: var(--pill-ink);
+
+  --c-ink: var(--pill-ink);
+  --c-ink-2: var(--pill-ink-2);
+  --c-smoke: var(--pill-smoke);
+  --c-faint: var(--pill-faint);
+  --c-fill: var(--pill-fill);
+  --c-fill-strong: var(--pill-fill-strong);
+  --spec-top: transparent;
+  --rim: none;
+}
+
+/* The rim is drawn by a pseudo-element, so zeroing `--rim` is not enough: a
+   `none` background still paints the mask. */
+[data-platform="macos"] .glass-pill.rim::before,
+[data-platform="macos"] .glass-pill .rim::before {
+  display: none;
+}
+
+/* The controls inside the capsule are tints on the glass, never a second piece
+   of glass — stacking one translucent surface on another is the one thing the
+   material system says not to do, and on real glass it shows immediately as a
+   milky patch. The inset highlight comes off with them. */
+[data-platform="macos"] .glass-pill button,
+[data-platform="macos"] .glass-pill .press {
+  box-shadow: none;
+}
+
+/* ==========================================================================
+   Fallback: the glass did not install
+   ==========================================================================
+   Everything above is written on the assumption that there is a real
+   `NSGlassEffectView` behind the webview. If there is not — the class is
+   missing, the content view was not ready, `drawsBackground` stopped being
+   settable in some future WebKit — then a capsule with no fill and no rim is
+   not a subtle bar, it is *nothing*: floating text and a floating mic glyph
+   over the desktop, with no way to tell the app is even running.
+
+   Rust only reports `desktop_blur_active` once `install_glass` has actually
+   returned Ok, and `app/bar/page.tsx` mirrors that onto the root element. So
+   `false` here means "asked, and there is no material" — the one case that
+   has to pay for its own background, and the painted capsule from
+   `globals.css` is exactly the right thing to fall back to.
+
+   The attribute is *absent* until the bar has asked, and absence deliberately
+   does not match: assuming the good case avoids a frame of painted capsule
+   flashing before the real glass takes over on every single show. */
+:root[data-platform="macos"][data-desktop-blur="false"] {
+  --pill-alpha: 1;
+  --pill-glow: oklch(1 0 0 / 0.24);
+  --pill-top: oklch(1 0 0 / 0.20);
+  --pill-text-shadow: 0 1px 2px oklch(0 0 0 / 0.45);
+  --pill-rim: var(--rim);
+}
+
+[data-platform="macos"][data-desktop-blur="false"] .glass-pill {
+  background-color: hsl(var(--pill-tint) / var(--pill-alpha));
+  color: oklch(1 0 0 / 0.96);
+  box-shadow:
+    inset 0 1px 0 var(--pill-top),
+    inset 0 0 12px -4px var(--pill-glow);
+  text-shadow: var(--pill-text-shadow);
+
+  --c-ink: oklch(1 0 0 / 0.96);
+  --c-ink-2: oklch(1 0 0 / 0.78);
+  --c-smoke: oklch(1 0 0 / 0.72);
+  --c-faint: oklch(1 0 0 / 0.45);
+  --c-fill: oklch(1 0 0 / 0.14);
+  --c-fill-strong: oklch(1 0 0 / 0.22);
+  --spec-top: oklch(1 0 0 / 0.18);
+  --rim: var(--pill-rim);
+}
+
+[data-platform="macos"][data-desktop-blur="false"] .glass-pill.rim::before,
+[data-platform="macos"][data-desktop-blur="false"] .glass-pill .rim::before {
+  display: block;
+}

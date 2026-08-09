@@ -175,6 +175,20 @@ pub fn enable_background_blur(_window: &tauri::WebviewWindow) -> Result<(), Stri
     Ok(())
 }
 
+/// Reshape any native material we own after the window changed size.
+///
+/// Only macOS has anything to do here: the glass is a view in our own window,
+/// and a capsule's corner radius is half its height, so a bar that grew from
+/// the idle stub to a transcript strip needs the radius recomputed. On Linux
+/// the blur belongs to the compositor and follows the surface by itself.
+#[cfg(target_os = "macos")]
+pub fn sync_material(window: &tauri::WebviewWindow) {
+    macos_panel::sync_glass(window);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn sync_material(_window: &tauri::WebviewWindow) {}
+
 /// A rectangle in the global logical desktop.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
