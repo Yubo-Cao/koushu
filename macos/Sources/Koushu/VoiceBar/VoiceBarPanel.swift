@@ -68,13 +68,13 @@ final class VoiceBarPanel: NSPanel {
 @MainActor
 final class BarWindowController {
     let panel: VoiceBarPanel
-    private let model: BarModel
+    private let bar: VoiceBarModel
     private var pointerPoll: Timer?
 
     static let windowSize = NSSize(width: 760, height: 300)
 
-    init(model: BarModel) {
-        self.model = model
+    init(app: AppModel, bar: VoiceBarModel) {
+        self.bar = bar
         let screen = NSScreen.main ?? NSScreen.screens[0]
         let vf = screen.visibleFrame
         let origin = NSPoint(
@@ -83,7 +83,7 @@ final class BarWindowController {
         )
         panel = VoiceBarPanel(contentRect: NSRect(origin: origin, size: Self.windowSize))
 
-        let host = NSHostingView(rootView: BarView(model: model))
+        let host = NSHostingView(rootView: BarView(app: app, bar: bar))
         host.frame = NSRect(origin: .zero, size: Self.windowSize)
         host.autoresizingMask = [.width, .height]
         // NSHostingView is transparent unless SwiftUI paints something; make
@@ -116,7 +116,7 @@ final class BarWindowController {
 
     /// Bar rect in screen coordinates (AppKit: origin bottom-left).
     var barScreenRect: NSRect? {
-        guard let r = model.barRectInView else { return nil }
+        guard let r = bar.barRectInView else { return nil }
         let f = panel.frame
         return NSRect(
             x: f.minX + r.minX,

@@ -16,22 +16,22 @@
 #
 # Signing with a self-signed certificate instead makes the requirement:
 #
-#     designated => identifier "com.funasr.voicebar.prototype"
+#     designated => identifier "dev.yubo.koushu"
 #                   and certificate leaf = H"d660d124..."
 #
 # The certificate does not change when the code changes, so a grant given once
 # survives every subsequent build.
 #
-# Scope of what this touches: one keychain under ~/.funasr-signing, holding one
+# Scope of what this touches: one keychain under ~/.koushu-signing, holding one
 # certificate. It does **not** add a trusted root to the system trust store and
 # does not modify the keychain search list — `codesign` is pointed at the
-# keychain explicitly instead. Undo with:  rm -rf ~/.funasr-signing
+# keychain explicitly instead. Undo with:  rm -rf ~/.koushu-signing
 set -euo pipefail
 
-WORK="$HOME/.funasr-signing"
-KC="$WORK/funasr.keychain-db"
-PW="funasrproto"
-CN="FunASR Bar Dev"
+WORK="$HOME/.koushu-signing"
+KC="$WORK/koushu.keychain-db"
+PW="koushudev"
+CN="Koushu Dev"
 
 if [ -f "$KC" ] && security find-certificate -c "$CN" "$KC" >/dev/null 2>&1; then
     security unlock-keychain -p "$PW" "$KC"
@@ -48,7 +48,7 @@ distinguished_name=dn
 x509_extensions=v3
 prompt=no
 [dn]
-CN=FunASR Bar Dev
+CN=Koushu Dev
 [v3]
 basicConstraints=critical,CA:false
 keyUsage=critical,digitalSignature

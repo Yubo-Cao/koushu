@@ -1,0 +1,15 @@
+# SPM
+.build/
+.swiftpm/
+
+# Staged by build.sh from core/generated/, which is itself gitignored.
+#
+# Package.swift keys off the presence of these files to decide whether to
+# compile the Rust-backed targets, so they are load-bearing for the build but
+# never for the repository: `CORE=1 ./build.sh` recreates them, and without them
+# the app builds against the Swift stubs.
+Sources/KoushuRustCore/koushu_core.swift
+Sources/KoushuCoreFFI/
+
+# Staged static library, see build.sh.
+.rustlib/

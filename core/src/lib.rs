@@ -37,8 +37,11 @@
 //!
 //! See `docs/core-extraction.md` for the migration plan and its current state.
 
+pub mod asr;
 pub mod asr_cloud;
+pub mod audio;
 pub mod license;
 pub mod llm;
+pub mod storage;
 
 uniffi::setup_scaffolding!();

@@ -41,22 +41,41 @@ final class BackdropController {
     private var panel: BackdropPanel?
     private(set) var kind: BackdropKind = .none
 
-    static let size = NSSize(width: 1300, height: 600)
+    /// Where the backdrop sits relative to ordinary windows.
+    ///
+    /// Two positions, because there are two things to photograph. The bar is a
+    /// `.statusBar` panel above everything, so its backdrop has to be above
+    /// ordinary windows too. The main and settings windows *are* ordinary
+    /// windows, and their sidebar and toolbar materials sample what is behind
+    /// the window — so their backdrop has to be underneath, standing in for the
+    /// desktop.
+    private(set) var isBelowWindows = false
 
-    func show(_ kind: BackdropKind) {
+    static let size = NSSize(width: 1300, height: 600)
+    /// Big enough to sit behind the whole main window rather than peeking out
+    /// around it, which would photograph as a frame rather than as a background.
+    static let fullSize = NSSize(width: 1700, height: 1100)
+
+    func show(_ kind: BackdropKind, below: Bool = false) {
         self.kind = kind
+        isBelowWindows = below
         guard kind != .none else { hide(); return }
 
         let screen = NSScreen.main ?? NSScreen.screens[0]
         let vf = screen.visibleFrame
+        let size = below ? Self.fullSize : Self.size
         let frame = NSRect(
-            x: vf.midX - Self.size.width / 2,
-            y: vf.minY + 24,
-            width: Self.size.width,
-            height: Self.size.height
+            x: vf.midX - size.width / 2,
+            y: below ? vf.midY - size.height / 2 : vf.minY + 24,
+            width: size.width,
+            height: size.height
         )
 
         let p = panel ?? BackdropPanel(frame: frame)
+        // `.normal - 1` rather than a desktop level: it has to be under our own
+        // windows but still over the user's wallpaper, and it must not end up
+        // under the user's windows where it would be invisible and pointless.
+        p.level = below ? NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue - 1) : .floating
         p.setFrame(frame, display: false)
         let host = NSHostingView(rootView: BackdropView(kind: kind))
         host.frame = NSRect(origin: .zero, size: frame.size)
@@ -185,7 +204,7 @@ private struct TerminalBackdrop: View {
     /// material looks identical.
     static let lines = [
         "$ swift build -c release --disable-sandbox && ./build.sh   # 5.6s, arm64, macOS 27 SDK",
-        "  designated => identifier \"com.funasr.voicebar.prototype\" and certificate leaf = H\"8062…\"",
+        "  designated => identifier \"dev.yubo.koushu\" and certificate leaf = H\"8062…\"",
         "",
         "// The whole product depends on one property: the bar must never take the keyboard.",
         "styleMask: [.borderless, .nonactivatingPanel]        // clickable without activating us",

@@ -5,33 +5,45 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleExecutable</key>
-	<string>FunASRBar</string>
+	<string>Koushu</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.funasr.voicebar.prototype</string>
+	<string>dev.yubo.koushu</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>FunASR Bar</string>
+	<string>Koushu</string>
 	<key>CFBundleDisplayName</key>
-	<string>FunASR Bar</string>
+	<string>Koushu</string>
+	<key>CFBundleIconFile</key>
+	<string>Koushu.icns</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1</string>
+	<string>0.0.2</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
-	<!-- Accessory app: no Dock tile, never becomes the active app. -->
+	<!-- Accessory app: no Dock tile and never the active application on launch.
+	     Opening a window promotes the process to .regular for as long as one is
+	     open; see WindowManager. -->
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
-	<!-- Without this key macOS silently refuses to deliver microphone audio:
-	     the engine runs, the taps fire, and every buffer is pure silence. -->
+	<!-- Without this key macOS does not refuse loudly: the engine runs, the taps
+	     fire, and every buffer is pure silence. -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>FunASR 需要访问麦克风，用来在你按住快捷键说话时采集语音并转写成文字。</string>
+	<string>Koushu 需要访问麦克风，用来在你按住快捷键说话时采集语音并转写成文字。</string>
+	<!-- Both locales the interface ships in. The app switches at runtime from
+	     the `ui.locale` setting, but this is what the system reads when it
+	     decides whether the app is available in the user's language at all. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh_CN</string>
+		<string>en</string>
+	</array>
 </dict>
 </plist>

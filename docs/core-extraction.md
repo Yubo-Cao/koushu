@@ -121,12 +121,41 @@ could have caught it: **a workspace moves cargo's output from
 `src-tauri/target` to the repository root `target/`.** Anything with that path
 written down has to move with it.
 
+**Slice 2 — partly done, out of order.** `asr` and `audio`: the two llama.cpp
+runtime invocations, the GGUF asset lists, the WAV encoder and the
+speech-or-silence test. Taken before storage because the native app needed
+*something* real to transcribe with, and this is the half of the ASR work that
+has no state in it — a binary, a directory of GGUF files, a WAV path, and a
+string back.
+
+Two shapes came out of it that the rest should follow. `AsrJob` is an object
+with `run` and `cancel` rather than a function, because killing the child
+process is the only thing that actually stops a decode. And `AsrOutcome` carries
+`failure: Option<String>` instead of being a `Result`, because a missing model
+file and a runtime that exited non-zero are both answers with a sentence in them
+that arrive on a path where the recording still exists.
+
+What is *not* moved: the VAD-segmented streaming worker that produces partials.
+The macOS app therefore has no live preview — it shows elapsed time while you
+hold the key and the text when you let go.
+
+**Slice 3 — done.** `storage`: schema and migrations, sessions, transcripts,
+settings, models, and the FTS5 trigram search. Both shells now open the same
+file, which is the point — a native app with its own database would have forked
+the user's transcripts on the day it was installed.
+
+The tests are written against the rules rather than the queries: that a
+two-character Chinese term routes to the scan and a four-character one to the
+index, that AND semantics hold on *both* routes, that an archived session
+disappears from search as well as from the list (a hit you cannot open is not a
+hit), that a title the user chose is never overwritten, and that formatting never
+touches what was said.
+
 Remaining:
 
-1. **Storage** — schema, queries, the FTS5 trigram index and its routing rule.
-   The most tests, so mistakes surface fast.
-2. **The ASR runtime and streaming worker**, where the real complexity is and
-   where a stable interface matters most.
+1. **The streaming worker**, for partials on both platforms.
+2. **Model downloading**, which is the last thing the native app reports as
+   unavailable rather than doing.
 3. **Trial metering and settings.**
 4. **Leave `lib.rs` as a thin Tauri shim.** If it is not obviously thin at the
    end, the boundary was drawn in the wrong place.
