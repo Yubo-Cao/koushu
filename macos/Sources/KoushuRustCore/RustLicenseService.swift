@@ -21,7 +21,7 @@ public struct RustLicenseService: LicenseService {
         // mismatch. Doing it here means a stale `libkoushu_core.a` fails at
         // startup with a clear message rather than at the first verification —
         // which, for licensing, would be the least convenient possible moment.
-        uniffiEnsureFunAsrCoreInitialized()
+        uniffiEnsureKoushuCoreInitialized()
     }
 
     /// Note that this does not throw, and that this is the interesting part.
