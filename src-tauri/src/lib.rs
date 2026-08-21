@@ -1,4 +1,4 @@
-pub use fun_asr_core::{asr_cloud, license, llm};
+pub use koushu_core::{asr_cloud, license, llm};
 pub mod hotkey;
 pub mod inject;
 mod panel;
@@ -1158,7 +1158,7 @@ fn get_trial_status(state: tauri::State<'_, AppState>) -> Result<TrialStatus, St
 // ---------------------------------------------------------------------------
 
 /// Service name under which the API key is stored in the OS credential store.
-const LLM_KEYRING_SERVICE: &str = "dev.yubo.fun-asr-desktop";
+const LLM_KEYRING_SERVICE: &str = "dev.yubo.koushu";
 const LLM_KEYRING_USER: &str = "llm-api-key";
 
 #[derive(Debug, Clone, Serialize)]
@@ -2962,7 +2962,7 @@ fn show_settings_window(app: AppHandle) -> Result<(), String> {
     let height = 760.0 + CSD_PADDING;
     let window = apply_window_chrome(
         WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("/settings".into()))
-            .title("Fun ASR Settings")
+            .title("Koushu Settings")
             .inner_size(width, height)
             .min_inner_size(960.0 + CSD_PADDING, 640.0 + CSD_PADDING)
             .center(),
@@ -3185,7 +3185,7 @@ pub fn run() {
             // reason for it.
             let main_window = apply_window_chrome(
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("/".into()))
-                    .title("Fun ASR Desktop")
+                    .title("Koushu 口述")
                     .inner_size(1240.0 + CSD_PADDING, 820.0 + CSD_PADDING)
                     .min_inner_size(1040.0 + CSD_PADDING, 700.0 + CSD_PADDING)
                     .center(),
@@ -3272,11 +3272,11 @@ pub fn run() {
             window_chrome
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Fun ASR Desktop");
+        .expect("error while running Koushu 口述");
 }
 
 fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {
-    let db_path = app_dir.join("fun_asr_desktop.sqlite3");
+    let db_path = app_dir.join("koushu.sqlite3");
     let conn = Connection::open(db_path)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -4641,7 +4641,7 @@ mod search_tests {
 
     /// Search a real database, migration and all.
     ///
-    ///     FUN_ASR_REAL_DB=~/.local/share/dev.yubo.fun-asr-desktop/fun_asr_desktop.sqlite3 \
+    ///     FUN_ASR_REAL_DB=~/.local/share/dev.yubo.koushu/koushu.sqlite3 \
     ///       cargo test real_database -- --nocapture
     ///
     /// Skipped unless that variable is set, because it asserts against whatever
@@ -4653,7 +4653,7 @@ mod search_tests {
     #[test]
     fn real_database_migrates_and_matches_its_own_text() {
         let Ok(source) = std::env::var("FUN_ASR_REAL_DB") else {
-            eprintln!("skipped: set FUN_ASR_REAL_DB to a fun_asr_desktop.sqlite3 to run this");
+            eprintln!("skipped: set FUN_ASR_REAL_DB to a koushu.sqlite3 to run this");
             return;
         };
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE_NAME="${FUN_ASR_DESKTOP_BUILDER_IMAGE:-fun-asr-desktop-linux-builder:0.0.1}"
+IMAGE_NAME="${FUN_ASR_DESKTOP_BUILDER_IMAGE:-koushu-linux-builder:0.0.1}"
 
 docker build \
   -f "${ROOT_DIR}/.devcontainer/Dockerfile" \

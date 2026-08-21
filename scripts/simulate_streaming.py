@@ -5,9 +5,9 @@
 """
 import os, struct, subprocess, sys, time, wave
 
-B = "/home/yubo/data/project/fun-asr-desktop/src-tauri/binaries"
-M = os.path.expanduser("~/.local/share/dev.yubo.fun-asr-desktop/models")
-TMP = "/tmp/claude-1000/-home-yubo-data-project-fun-asr-desktop/6b1e8cfa-8248-4306-8007-ef01edc62a63/scratchpad/simtmp"
+B = "/home/yubo/data/project/koushu/src-tauri/binaries"
+M = os.path.expanduser("~/.local/share/dev.yubo.koushu/models")
+TMP = "/tmp/koushu-simtmp"
 os.makedirs(TMP, exist_ok=True)
 
 STREAM_POLL_MS = 250

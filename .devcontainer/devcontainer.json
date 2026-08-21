@@ -1,5 +1,5 @@
 {
-  "name": "Fun ASR Desktop Linux Builder",
+  "name": "Koushu 口述 Linux Builder",
   "build": {
     "context": "..",
     "dockerfile": "Dockerfile"

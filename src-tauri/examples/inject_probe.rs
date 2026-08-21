@@ -13,7 +13,7 @@ use std::env;
 use std::thread::sleep;
 use std::time::Duration;
 
-use fun_asr_desktop_lib::inject;
+use koushu_lib::inject;
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();

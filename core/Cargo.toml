@@ -1,12 +1,12 @@
 [package]
-name = "fun-asr-core"
+name = "koushu-core"
 version = "0.0.2"
 description = "Platform-neutral core for Fun ASR."
-authors = ["Fun ASR Desktop Contributors"]
+authors = ["Koushu 口述 Contributors"]
 edition = "2021"
 
 [lib]
-name = "fun_asr_core"
+name = "koushu_core"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]

@@ -7,7 +7,7 @@ fn main() {
     let id = std::env::args().nth(1).expect("transcript id");
     let db = dirs_next::data_dir()
         .unwrap()
-        .join("dev.yubo.fun-asr-desktop/fun_asr_desktop.sqlite3");
+        .join("dev.yubo.koushu/koushu.sqlite3");
     let conn = Connection::open(&db).expect("open db");
 
     let get = |key: &str| -> String {
@@ -18,7 +18,7 @@ fn main() {
         )
         .unwrap_or_default()
     };
-    let config = fun_asr_desktop_lib::llm::LlmConfig {
+    let config = koushu_lib::llm::LlmConfig {
         base_url: get("llm.baseUrl"),
         model: get("llm.model"),
         api_key: String::new(),
@@ -28,7 +28,7 @@ fn main() {
         let v = get("llm.preset");
         if v.is_empty() { "typeset".to_string() } else { v }
     };
-    let preset = fun_asr_desktop_lib::llm::presets::by_id(&preset_id).expect("preset");
+    let preset = koushu_lib::llm::presets::by_id(&preset_id).expect("preset");
 
     let text: String = conn
         .query_row("SELECT text FROM transcripts WHERE id = ?1", params![id], |r| r.get(0))
@@ -37,7 +37,7 @@ fn main() {
     println!("endpoint  : {} model={}", config.base_url, config.model);
 
     let mut deltas = 0;
-    let formatted = fun_asr_desktop_lib::llm::format_streaming(
+    let formatted = koushu_lib::llm::format_streaming(
         &config, preset.prompt, &text, |_| deltas += 1, || false,
     )
     .expect("format");

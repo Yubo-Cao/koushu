@@ -16,8 +16,8 @@ import type { Messages } from "./en";
  */
 export const zh: Messages = {
   // ---- Shared ------------------------------------------------------------
-  "common.appName": "Fun ASR",
-  "common.loading": "正在启动 Fun ASR",
+  "common.appName": "口述",
+  "common.loading": "正在启动口述",
   "common.settings": "设置",
   "common.pause": "暂停",
   "common.copy": "复制",
@@ -196,7 +196,7 @@ export const zh: Messages = {
   "settings.hotkey.live": "已生效，按住 {chord} 说话。",
   "settings.hotkey.notBound": "没在监听，按住不会有反应。",
   "settings.hotkey.conflict": "桌面环境保留了原来的绑定 {bound}，没有把这个快捷键交出来。请到系统设置的 {path} 里改。",
-  "settings.hotkey.conflictPath": "快捷键 › Fun ASR Desktop",
+  "settings.hotkey.conflictPath": "快捷键 › Koushu 口述",
   "settings.hotkey.boundAs": "桌面环境报告的绑定是 {bound}。",
   "settings.hotkey.listener": "监听方式",
   "settings.hotkey.backend.portal": "桌面门户",
@@ -231,7 +231,7 @@ export const zh: Messages = {
   "settings.setup.willShow": "下次打开主窗口时会重新显示引导。",
 
   // ---- First-run setup ---------------------------------------------------
-  "setup.version": "Fun ASR Desktop {version}",
+  "setup.version": "Koushu 口述 {version}",
   "setup.headline": "欢迎使用本地语音转写",
   "setup.lede":
     "对着麦克风说话，本地即刻转成文字，记录只留在这台电脑上；用悬浮条可以把文字直接粘贴进任何应用。",

@@ -121,7 +121,7 @@ impl Locale {
     fn open(self) -> &'static str {
         match self {
             Self::Zh => "打开主窗口",
-            Self::En => "Open Fun ASR",
+            Self::En => "Open Koushu",
         }
     }
 
@@ -134,8 +134,8 @@ impl Locale {
 
     fn quit(self) -> &'static str {
         match self {
-            Self::Zh => "退出 Fun ASR",
-            Self::En => "Quit Fun ASR",
+            Self::Zh => "退出口述",
+            Self::En => "Quit Koushu",
         }
     }
 }
@@ -243,7 +243,7 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
     let tray = TrayIconBuilder::with_id("fun-asr-tray")
         .icon(activity.icon())
         .icon_as_template(activity.is_template())
-        .tooltip("Fun ASR Desktop")
+        .tooltip("Koushu 口述")
         .menu(&menu)
         // Linux ignores this (libappindicator only ever opens the menu), but on
         // macOS it keeps one gesture doing one thing on both platforms.

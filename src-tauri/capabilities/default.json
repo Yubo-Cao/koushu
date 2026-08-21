@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for Fun ASR Desktop windows.",
+  "description": "Default permissions for Koushu 口述 windows.",
   "windows": ["main", "voice-bar", "settings"],
   "permissions": [
     "core:default",

@@ -1592,49 +1592,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fun-asr-core"
-version = "0.0.2"
-dependencies = [
- "base64 0.22.1",
- "ed25519-dalek",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uniffi",
-]
-
-[[package]]
-name = "fun-asr-desktop"
-version = "0.0.2"
-dependencies = [
- "arboard",
- "base64 0.22.1",
- "chrono",
- "core-foundation 0.10.1",
- "core-graphics 0.24.0",
- "cpal",
- "dirs-next",
- "evdev",
- "fun-asr-core",
- "gtk",
- "gtk-layer-shell",
- "keyring",
- "objc",
- "reqwest 0.12.28",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "uuid",
- "wayland-client",
- "wayland-protocols",
- "zbus 5.18.0",
-]
-
-[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2631,6 +2588,49 @@ dependencies = [
  "security-framework 2.11.1",
  "security-framework 3.7.0",
  "zeroize",
+]
+
+[[package]]
+name = "koushu"
+version = "0.0.2"
+dependencies = [
+ "arboard",
+ "base64 0.22.1",
+ "chrono",
+ "core-foundation 0.10.1",
+ "core-graphics 0.24.0",
+ "cpal",
+ "dirs-next",
+ "evdev",
+ "gtk",
+ "gtk-layer-shell",
+ "keyring",
+ "koushu-core",
+ "objc",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "uuid",
+ "wayland-client",
+ "wayland-protocols",
+ "zbus 5.18.0",
+]
+
+[[package]]
+name = "koushu-core"
+version = "0.0.2"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uniffi",
 ]
 
 [[package]]

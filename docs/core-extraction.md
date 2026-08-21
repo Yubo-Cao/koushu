@@ -37,7 +37,7 @@ Measured, not estimated (`wc -l`, 2026-08-08):
 So the one-time cost is roughly 3,300 lines of UI. The recurring cost is that
 every feature after this lands twice — that, not the rewrite, is the real price.
 
-### Core (`fun-asr-core`)
+### Core (`koushu-core`)
 
 Everything here is platform-neutral and has no Tauri dependency:
 
@@ -100,7 +100,7 @@ UI then has to re-translate — twice.
 
 ## Order of work
 
-**Slice 1 — done.** Workspace, the `fun-asr-core` crate, and the three modules
+**Slice 1 — done.** Workspace, the `koushu-core` crate, and the three modules
 with no Tauri dependency at all: `license`, `asr_cloud`, `llm`. Plus the UniFFI
 scaffolding, with licence verification as the one thing crossing the boundary.
 
@@ -113,7 +113,7 @@ workspace, UniFFI, generated Swift — on code that is small and already tested,
 rather than proving the familiar part first.
 
 `src-tauri/src/lib.rs` moved by exactly 1 insertion and 3 deletions: three
-`mod` declarations became `pub use fun_asr_core::{asr_cloud, license, llm};`.
+`mod` declarations became `pub use koushu_core::{asr_cloud, license, llm};`.
 The moved files kept their git blob hashes, so nothing was quietly rewritten.
 
 One consequence worth knowing about, because it broke a script and no test

@@ -18,8 +18,8 @@
  */
 export const en = {
   // ---- Shared ------------------------------------------------------------
-  "common.appName": "Fun ASR",
-  "common.loading": "Loading Fun ASR Desktop",
+  "common.appName": "Koushu",
+  "common.loading": "Loading Koushu 口述",
   "common.settings": "Settings",
   "common.pause": "Pause",
   "common.copy": "Copy",
@@ -218,7 +218,7 @@ export const en = {
   "settings.hotkey.notBound": "Not listening. Holding this will do nothing.",
   "settings.hotkey.conflict":
     "The desktop kept its own binding, {bound}, and would not hand this shortcut over. Change it under {path} in the system settings.",
-  "settings.hotkey.conflictPath": "Shortcuts › Fun ASR Desktop",
+  "settings.hotkey.conflictPath": "Shortcuts › Koushu 口述",
   "settings.hotkey.boundAs": "The desktop reports this as {bound}.",
   "settings.hotkey.listener": "Listening via",
   "settings.hotkey.backend.portal": "desktop portal",
@@ -256,7 +256,7 @@ export const en = {
   "settings.setup.willShow": "Setup will show on next main-window load.",
 
   // ---- First-run setup ---------------------------------------------------
-  "setup.version": "Fun ASR Desktop {version}",
+  "setup.version": "Koushu 口述 {version}",
   "setup.headline": "Welcome to local voice transcription.",
   "setup.lede":
     "Talk into your microphone, get fast local transcripts, keep history on this machine, and use the floating bar to paste text into any app.",

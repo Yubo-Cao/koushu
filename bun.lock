@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "fun-asr-desktop",
+      "name": "koushu",
       "dependencies": {
         "@tauri-apps/api": "^2.9.0",
         "@tauri-apps/plugin-clipboard-manager": "^2.3.0",

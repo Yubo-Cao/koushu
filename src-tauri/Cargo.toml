@@ -1,12 +1,12 @@
 [package]
-name = "fun-asr-desktop"
+name = "koushu"
 version = "0.0.2"
 description = "Linux-first desktop wrapper for Fun-ASR."
-authors = ["Fun ASR Desktop Contributors"]
+authors = ["Koushu 口述 Contributors"]
 edition = "2021"
 
 [lib]
-name = "fun_asr_desktop_lib"
+name = "koushu_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -18,7 +18,7 @@ base64.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
 cpal = "0.15"
 dirs-next = "2"
-fun-asr-core = { path = "../core" }
+koushu-core = { path = "../core" }
 reqwest.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde.workspace = true

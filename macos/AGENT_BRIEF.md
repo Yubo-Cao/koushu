@@ -7,7 +7,7 @@ self-contained.
 
 ## What this is
 
-`fun-asr-desktop` is a local speech-to-text app: hold a global hotkey, talk, and
+`koushu` is a local speech-to-text app: hold a global hotkey, talk, and
 the transcript lands in whatever you were typing in. It exists today as a Tauri
 v2 app (Next.js in a WebKitGTK/WKWebView shell) that runs on Linux and macOS.
 
@@ -106,7 +106,7 @@ not for structure — this is a rewrite, not a port.
 ## The shared core
 
 Do **not** reimplement ASR, VAD, storage, search, the LLM client or licensing in
-Swift. Those live in a Rust core (`core/`, crate `fun-asr-core`) that is being
+Swift. Those live in a Rust core (`core/`, crate `koushu-core`) that is being
 extracted behind UniFFI-generated Swift bindings. See `docs/core-extraction.md`.
 
 Three constraints from that design apply to anything you call:

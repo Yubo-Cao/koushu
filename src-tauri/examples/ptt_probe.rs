@@ -8,7 +8,7 @@ fn main() {
     let secs: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(12);
 
     let start = Instant::now();
-    let status = fun_asr_desktop_lib::hotkey_start_for_probe(&trigger, move |edge| {
+    let status = koushu_lib::hotkey_start_for_probe(&trigger, move |edge| {
         println!("  {:?}  @{:.2}s", edge, start.elapsed().as_secs_f32());
     });
     println!("backend = {:?}", status.backend);

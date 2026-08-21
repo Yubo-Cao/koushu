@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 from cryptography.hazmat.primitives import serialization
 
-KEY_PATH = os.path.expanduser("~/.config/fun-asr-desktop/license-signing.key")
+KEY_PATH = os.path.expanduser("~/.config/koushu/license-signing.key")
 
 
 def b64(data: bytes) -> str:

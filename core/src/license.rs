@@ -59,7 +59,7 @@ pub struct LicenseInfo {
 // looked: UniFFI generates `errorDescription` as `String(reflecting: self)`, so
 // the idiomatic Swift call — putting `error.localizedDescription` in front of
 // the user — would have shown
-// `fun_asr_core.LicenseVerificationError.Rejected(detail: "…")` rather than the
+// `koushu_core.LicenseVerificationError.Rejected(detail: "…")` rather than the
 // sentence inside it. It also made `LicenseInfo.valid` a field that could only
 // ever be `true` on the Swift side.
 //

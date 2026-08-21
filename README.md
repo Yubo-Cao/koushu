@@ -1,4 +1,4 @@
-# Fun ASR Desktop
+# Koushu 口述
 
 Linux-first Tauri wrapper for Fun-ASR with a Next.js + Tailwind CSS v4 frontend.
 
@@ -37,13 +37,13 @@ bun run tauri:build
 The verified default artifact is:
 
 ```text
-target/release/bundle/deb/Fun ASR Desktop_0.0.2_amd64.deb
+target/release/bundle/deb/Koushu 口述_0.0.2_amd64.deb
 ```
 
 The release binary is also available at:
 
 ```text
-target/release/fun-asr-desktop
+target/release/koushu
 ```
 
 Local host AppImage build:
@@ -55,7 +55,7 @@ bun run tauri:build:appimage
 The verified AppImage artifact is:
 
 ```text
-target/release/bundle/appimage/Fun_ASR_Desktop-0.0.2-x86_64.AppImage
+target/release/bundle/appimage/Koushu-0.0.2-x86_64.AppImage
 ```
 
 The host AppImage script keeps Tauri's normal AppDir generation, then retries only

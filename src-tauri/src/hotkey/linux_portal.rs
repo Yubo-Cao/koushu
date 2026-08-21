@@ -224,7 +224,7 @@ where
         })?;
 
     let mut meta = std::collections::HashMap::new();
-    meta.insert("description", Value::from("Fun ASR: hold to talk"));
+    meta.insert("description", Value::from("Koushu: hold to talk"));
     meta.insert("preferred_trigger", Value::from(trigger));
     let mut bind_options = std::collections::HashMap::new();
     bind_options.insert("handle_token", Value::from("fun_asr_ptt_bind"));
