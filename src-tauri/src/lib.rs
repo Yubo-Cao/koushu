@@ -3185,7 +3185,7 @@ pub fn run() {
             // reason for it.
             let main_window = apply_window_chrome(
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("/".into()))
-                    .title("Koushu 口述")
+                    .title("Koushu")
                     .inner_size(1240.0 + CSD_PADDING, 820.0 + CSD_PADDING)
                     .min_inner_size(1040.0 + CSD_PADDING, 700.0 + CSD_PADDING)
                     .center(),
@@ -3272,7 +3272,7 @@ pub fn run() {
             window_chrome
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Koushu 口述");
+        .expect("error while running Koushu");
 }
 
 fn init_db(app_dir: &Path) -> rusqlite::Result<Connection> {

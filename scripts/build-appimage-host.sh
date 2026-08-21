@@ -6,7 +6,7 @@ APP_VERSION="$(grep -m1 '"version"' "${ROOT_DIR}/src-tauri/tauri.conf.json" | se
 # Cargo writes to the workspace root since core/ was split out; this used to
 # be src-tauri/target and silently found nothing after the move.
 APPIMAGE_DIR="${ROOT_DIR}/target/release/bundle/appimage"
-APP_DIR="${APPIMAGE_DIR}/Koushu 口述.AppDir"
+APP_DIR="${APPIMAGE_DIR}/Koushu.AppDir"
 OUTPUT_NAME="Koushu-${APP_VERSION}-x86_64.AppImage"
 APPIMAGE_PLUGIN="${TAURI_LINUXDEPLOY_APPIMAGE_PLUGIN:-${HOME}/.cache/tauri/linuxdeploy-plugin-appimage.AppImage}"
 # Not ${ROOT_DIR}/target itself: that is now cargo's output directory,
@@ -59,14 +59,14 @@ echo "Tauri populated AppDir but host linuxdeploy failed during packaging."
 echo "Retrying direct AppImage packaging with NO_STRIP=true."
 echo "Original log: ${LOG_FILE}"
 
-DESKTOP_FILE="${APP_DIR}/usr/share/applications/Koushu 口述.desktop"
+DESKTOP_FILE="${APP_DIR}/usr/share/applications/Koushu.desktop"
 if [[ -f "${DESKTOP_FILE}" ]]; then
-  ln -sfn "usr/share/applications/Koushu 口述.desktop" "${APP_DIR}/Koushu 口述.desktop"
+  ln -sfn "usr/share/applications/Koushu.desktop" "${APP_DIR}/Koushu.desktop"
 fi
 
 for APPDIR_DESKTOP_FILE in \
-  "${APP_DIR}/Koushu 口述.desktop" \
-  "${APP_DIR}/usr/share/applications/Koushu 口述.desktop"; do
+  "${APP_DIR}/Koushu.desktop" \
+  "${APP_DIR}/usr/share/applications/Koushu.desktop"; do
   if [[ -f "${APPDIR_DESKTOP_FILE}" ]]; then
     if grep -q '^X-AppImage-Version=' "${APPDIR_DESKTOP_FILE}"; then
       sed -i -E "s/^X-AppImage-Version=.*/X-AppImage-Version=${APP_VERSION}/" "${APPDIR_DESKTOP_FILE}"

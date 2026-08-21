@@ -6,7 +6,7 @@ import "./globals.css";
 import "./glass-macos.css";
 
 export const metadata: Metadata = {
-  title: "Koushu 口述",
+  title: "Koushu",
   description: "Local desktop voice transcription for Fun-ASR.",
 };
 

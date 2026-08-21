@@ -1,4 +1,4 @@
-# Koushu 口述
+# Koushu
 
 Linux-first Tauri wrapper for Fun-ASR with a Next.js + Tailwind CSS v4 frontend.
 
@@ -37,7 +37,7 @@ bun run tauri:build
 The verified default artifact is:
 
 ```text
-target/release/bundle/deb/Koushu 口述_0.0.2_amd64.deb
+target/release/bundle/deb/Koushu_0.0.2_amd64.deb
 ```
 
 The release binary is also available at:

@@ -243,7 +243,7 @@ pub fn init(app: &AppHandle) -> Result<(), String> {
     let tray = TrayIconBuilder::with_id("fun-asr-tray")
         .icon(activity.icon())
         .icon_as_template(activity.is_template())
-        .tooltip("Koushu 口述")
+        .tooltip("Koushu")
         .menu(&menu)
         // Linux ignores this (libappindicator only ever opens the menu), but on
         // macOS it keeps one gesture doing one thing on both platforms.

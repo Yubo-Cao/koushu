@@ -2,7 +2,7 @@
 name = "koushu"
 version = "0.0.2"
 description = "Linux-first desktop wrapper for Fun-ASR."
-authors = ["Koushu 口述 Contributors"]
+authors = ["Koushu Contributors"]
 edition = "2021"
 
 [lib]

@@ -2,7 +2,7 @@
 name = "koushu-core"
 version = "0.0.2"
 description = "Platform-neutral core for Fun ASR."
-authors = ["Koushu 口述 Contributors"]
+authors = ["Koushu Contributors"]
 edition = "2021"
 
 [lib]
